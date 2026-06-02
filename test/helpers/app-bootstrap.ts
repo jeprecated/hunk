@@ -1,4 +1,10 @@
-import type { AppBootstrap, DiffFile, VcsDiffCommandInput, LayoutMode } from "../../src/core/types";
+import type {
+  AppBootstrap,
+  DiffFile,
+  VcsDiffCommandInput,
+  LayoutMode,
+  ReviewAttention,
+} from "../../src/core/types";
 
 export function createTestVcsAppBootstrap({
   agentSummary,
@@ -14,6 +20,7 @@ export function createTestVcsAppBootstrap({
   initialWrapLines,
   inputMode = initialMode,
   pager = false,
+  reviewAttention,
   sourceLabel = "repo",
   summary,
   title = "repo working tree",
@@ -31,6 +38,7 @@ export function createTestVcsAppBootstrap({
   initialWrapLines?: boolean;
   inputMode?: LayoutMode;
   pager?: boolean;
+  reviewAttention?: ReviewAttention;
   sourceLabel?: string;
   summary?: string;
   title?: string;
@@ -49,6 +57,7 @@ export function createTestVcsAppBootstrap({
       agentSummary,
       files,
       id: changesetId,
+      reviewAttention,
       sourceLabel,
       summary,
       title,

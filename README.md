@@ -128,6 +128,7 @@ line_numbers = true
 wrap_lines = false
 agent_notes = false
 transparent_background = false
+change_context_key = "none"  # none, jj-change-id
 ```
 
 `theme = "auto"` and `--theme auto` query the terminal background at startup, choose `github-light-default` for light backgrounds and `github-dark-default` for dark backgrounds, and fall back to `github-dark-default` if the terminal does not answer.
@@ -181,6 +182,17 @@ If you want to keep Git's default pager and add opt-in aliases instead:
 git config --global alias.hdiff "-c core.pager=\"hunk pager\" diff"
 git config --global alias.hshow "-c core.pager=\"hunk pager\" show"
 ```
+
+### Jujutsu Change Context Files
+
+Hunk can auto-load ignored local Change Context Files for jj changes when enabled:
+
+```toml
+change_context_key = "jj-change-id"
+agent_notes = true
+```
+
+Files live under `.hunk/change-context/<full-jj-change-id>.json` by convention. In jj workflows, prefer `--change-context` for explicit Change Context Files and use `hunk change-context path --for diff` to print the path for the current jj change.
 
 ### Jujutsu pager integration
 

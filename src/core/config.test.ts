@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CliInput } from "./types";
-import { resolveConfiguredCliInput } from "./config";
+import { resolveConfiguredChangeContextOptions, resolveConfiguredCliInput } from "./config";
 import { loadAppBootstrap } from "./loaders";
 
 const tempDirs: string[] = [];
@@ -98,6 +98,49 @@ describe("config resolution", () => {
       transparentBackground: true,
       colorMoved: true,
     });
+  });
+
+  test("parses change context config with command-specific overrides", () => {
+    const home = createTempDir("hunk-config-home-");
+    const repo = createTempDir("hunk-config-repo-");
+    createRepo(repo);
+
+    mkdirSync(join(home, ".config", "hunk"), { recursive: true });
+    writeFileSync(
+      join(home, ".config", "hunk", "config.toml"),
+      [
+        'change_context_key = "none"',
+        'change_context_dir = ".hunk/global-context"',
+        "",
+        "[diff]",
+        'change_context_key = "jj-change-id"',
+      ].join("\n"),
+    );
+
+    const resolved = resolveConfiguredChangeContextOptions({
+      cwd: repo,
+      env: { HOME: home },
+      commandKind: "diff",
+    });
+
+    expect(resolved.options.changeContextKey).toBe("jj-change-id");
+    expect(resolved.options.changeContextDir).toBe(".hunk/global-context");
+  });
+
+  test("rejects invalid change context keys", () => {
+    const home = createTempDir("hunk-config-home-");
+    const repo = createTempDir("hunk-config-repo-");
+    createRepo(repo);
+
+    mkdirSync(join(home, ".config", "hunk"), { recursive: true });
+    writeFileSync(
+      join(home, ".config", "hunk", "config.toml"),
+      'change_context_key = "git-commit"',
+    );
+
+    expect(() =>
+      resolveConfiguredCliInput(createPatchPagerInput(), { cwd: repo, env: { HOME: home } }),
+    ).toThrow('Expected change_context_key to be either "none" or "jj-change-id".');
   });
 
   test("merges custom theme overrides from global and repo config", () => {

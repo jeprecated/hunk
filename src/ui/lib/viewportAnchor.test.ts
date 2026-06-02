@@ -84,6 +84,31 @@ describe("viewport row anchors", () => {
     expect(splitAsAddition?.stableKey).toBe(additionAnchor?.stableKey);
   });
 
+  test("accounts for leading review banner height when capturing anchors", () => {
+    const file = createChangedFile();
+    const headerHeights = buildInStreamFileHeaderHeights([file]);
+    const geometry = measureDiffSectionGeometry(file, "stack", false, theme, [], 120, true, false);
+    const changeTop = geometry.rowBounds.find((row) => row.key.includes(":addition:"))?.top;
+    const bannerHeight = 3;
+
+    expect(changeTop).toBeDefined();
+
+    const anchor = findViewportRowAnchor(
+      [file],
+      [geometry],
+      bannerHeight + changeTop!,
+      headerHeights,
+      undefined,
+      bannerHeight,
+    );
+
+    expect(anchor?.fileId).toBe(file.id);
+    expect(anchor?.rowOffsetWithin).toBe(0);
+    expect(
+      resolveViewportRowAnchorTop([file], [geometry], anchor!, headerHeights, bannerHeight),
+    ).toBe(bannerHeight + changeTop!);
+  });
+
   test("round-trips a stacked deletion row through split view without changing the viewport anchor", () => {
     const file = createChangedFile();
     const headerHeights = buildInStreamFileHeaderHeights([file]);

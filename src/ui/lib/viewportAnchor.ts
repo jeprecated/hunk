@@ -43,11 +43,13 @@ export function findViewportRowAnchor(
   scrollTop: number,
   headerHeights: number[],
   preferredStableKey?: string | null,
+  startOffset = 0,
 ) {
   const fileSectionLayouts = buildFileSectionLayouts(
     files,
     sectionGeometry.map((metrics) => metrics?.bodyHeight ?? 0),
     headerHeights,
+    startOffset,
   );
 
   for (let index = 0; index < files.length; index += 1) {
@@ -86,11 +88,13 @@ export function resolveViewportRowAnchorTop(
   sectionGeometry: DiffSectionGeometry[],
   anchor: ViewportRowAnchor,
   headerHeights: number[],
+  startOffset = 0,
 ) {
   const fileSectionLayouts = buildFileSectionLayouts(
     files,
     sectionGeometry.map((metrics) => metrics?.bodyHeight ?? 0),
     headerHeights,
+    startOffset,
   );
 
   for (let index = 0; index < files.length; index += 1) {

@@ -59,6 +59,51 @@ describe("agent context", () => {
     );
   });
 
+  test("loads review attention and warns without dropping annotations", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hunk-agent-review-attention-"));
+    tempDirs.push(dir);
+    const warnings: string[] = [];
+
+    const contextPath = join(dir, "context.json");
+    writeFileSync(
+      contextPath,
+      JSON.stringify({
+        version: 1,
+        summary: "Agent summary",
+        change: { vcs: "jj", key: "jj-change-id", id: "different" },
+        reviewAttention: { level: "high", summary: "New feature" },
+        files: [{ path: "src/example.ts", annotations: [{ summary: "Keep this" }] }],
+      }),
+    );
+
+    const context = await loadAgentContext(contextPath, {
+      expectedChangeId: "expected",
+      warn: (message) => warnings.push(message),
+    });
+
+    expect(context?.reviewAttention).toEqual({ level: "high", summary: "New feature" });
+    expect(context?.change?.id).toBe("different");
+    expect(context?.files[0]?.annotations).toHaveLength(1);
+    expect(warnings[0]).toContain("does not match resolved jj change expected");
+
+    const malformedPath = join(dir, "malformed.json");
+    writeFileSync(
+      malformedPath,
+      JSON.stringify({
+        version: 1,
+        reviewAttention: { level: "urgent", summary: "Bad" },
+        files: [{ path: "src/example.ts", annotations: [{ summary: "Still loads" }] }],
+      }),
+    );
+
+    const malformed = await loadAgentContext(malformedPath, {
+      warn: (message) => warnings.push(message),
+    });
+
+    expect(malformed?.reviewAttention).toBeUndefined();
+    expect(malformed?.files[0]?.annotations).toHaveLength(1);
+  });
+
   test("rejects malformed file and range entries in the sidecar", async () => {
     const dir = mkdtempSync(join(tmpdir(), "hunk-agent-invalid-"));
     tempDirs.push(dir);

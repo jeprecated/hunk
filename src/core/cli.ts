@@ -2,6 +2,7 @@ import { existsSync, realpathSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { Command, Option } from "commander";
 import type {
+  ChangeContextCommandInput,
   CliInput,
   CommonOptions,
   HelpCommandInput,
@@ -58,16 +59,25 @@ function buildCommonOptions(
     mode?: LayoutMode;
     theme?: string;
     agentContext?: string;
+    changeContext?: string;
     pager?: boolean;
     watch?: boolean;
     transparentBackground?: boolean;
   },
   argv: string[],
 ): CommonOptions {
+  if (
+    options.agentContext &&
+    options.changeContext &&
+    options.agentContext !== options.changeContext
+  ) {
+    throw new Error("Specify either --change-context or --agent-context, not both.");
+  }
+
   return {
     mode: options.mode,
     theme: options.theme,
-    agentContext: options.agentContext,
+    agentContext: options.changeContext ?? options.agentContext,
     pager: options.pager ? true : undefined,
     watch: options.watch ? true : undefined,
     excludeUntracked: resolveBooleanFlag(argv, "--exclude-untracked", "--no-exclude-untracked"),
@@ -85,6 +95,7 @@ function applyCommonOptions(command: Command) {
     .option("--mode <mode>", "layout mode: auto, split, stack", parseLayoutMode)
     .option("--theme <theme>", "named theme override")
     .option("--agent-context <path>", "JSON sidecar with agent rationale")
+    .option("--change-context <path>", "alias for a Change Context File path")
     .option("--pager", "use pager-style chrome and controls")
     .option("--line-numbers", "show line numbers")
     .option("--no-line-numbers", "hide line numbers")
@@ -124,6 +135,17 @@ function renderSkillHelp() {
   ].join("\n");
 }
 
+function renderChangeContextHelp() {
+  return [
+    "Usage: hunk change-context <subcommand>",
+    "",
+    "Subcommands:",
+    "  path [rev]                         print the Change Context File path for a jj change",
+    "  validate [rev]                     validate the Change Context File for a jj change",
+    "",
+  ].join("\n");
+}
+
 /** Build the top-level help text shown by bare `hunk` and `hunk --help`. */
 function renderCliHelp() {
   return [
@@ -141,6 +163,8 @@ function renderCliHelp() {
     "  hunk pager                              general Git pager wrapper with diff detection",
     "  hunk difftool <left> <right> [path]     review Git difftool file pairs",
     "  hunk session <subcommand>               inspect or control a live Hunk session",
+    "  hunk change-context path [rev]           print the Change Context File path for a jj change",
+    "  hunk change-context validate [rev]       validate a Change Context File for a jj change",
     "  hunk skill path                         print the bundled Hunk review skill path",
     "  hunk daemon serve                       run the local Hunk session daemon",
     "",
@@ -152,6 +176,7 @@ function renderCliHelp() {
     "  --mode <mode>                           layout mode: auto, split, stack",
     "  --watch                                 auto-reload when the current diff input changes",
     "  --agent-context <path>                  JSON sidecar with agent rationale",
+    "  --change-context <path>                 alias for a Change Context File path",
     "  --pager                                 use pager-style chrome and controls",
     "  --line-numbers / --no-line-numbers      show or hide line numbers",
     "  --wrap / --no-wrap                      wrap or truncate long diff lines",
@@ -585,7 +610,13 @@ async function parseDifftoolCommand(tokens: string[], argv: string[]): Promise<P
 }
 
 function requireReloadableCliInput(input: ParsedCliInput): CliInput {
-  if (input.kind === "help" || input.kind === "pager" || input.kind === "daemon-serve") {
+  if (
+    input.kind === "help" ||
+    input.kind === "pager" ||
+    input.kind === "daemon-serve" ||
+    input.kind === "change-context-path" ||
+    input.kind === "change-context-validate"
+  ) {
     throw new Error(
       "Session reload requires a Hunk review command after --, such as `diff` or `show`.",
     );
@@ -1216,6 +1247,74 @@ async function parseSessionCommand(tokens: string[]): Promise<ParsedCliInput> {
   throw new Error(`Unknown session command: ${subcommand}`);
 }
 
+/** Parse `hunk change-context ...` helper commands. */
+async function parseChangeContextCommand(
+  tokens: string[],
+): Promise<HelpCommandInput | ChangeContextCommandInput> {
+  const [subcommand, ...rest] = tokens;
+  if (!subcommand || subcommand === "--help" || subcommand === "-h") {
+    return { kind: "help", text: renderChangeContextHelp() };
+  }
+
+  if (subcommand !== "path" && subcommand !== "validate") {
+    throw new Error("Supported change-context subcommands are path and validate.");
+  }
+
+  const command = new Command(`change-context ${subcommand}`)
+    .description(
+      subcommand === "path"
+        ? "print the Change Context File path for a Jujutsu change"
+        : "validate the Change Context File for a Jujutsu change",
+    )
+    .argument("[rev]")
+    .option("--for <command>", "apply command-specific config: diff or show")
+    .option("--json", "emit structured JSON");
+
+  if (subcommand === "validate") {
+    command.option("--strict", "fail validation for agent-facing stale-context warnings");
+  }
+
+  let parsedRev: string | undefined;
+  let parsedOptions: { for?: string; json?: boolean; strict?: boolean } = {};
+  command.action(
+    (rev: string | undefined, options: { for?: string; json?: boolean; strict?: boolean }) => {
+      parsedRev = rev;
+      parsedOptions = options;
+    },
+  );
+
+  if (rest.includes("--help") || rest.includes("-h")) {
+    return { kind: "help", text: `${command.helpInformation().trimEnd()}\n` };
+  }
+
+  await parseStandaloneCommand(command, rest);
+  if (
+    parsedOptions.for !== undefined &&
+    parsedOptions.for !== "diff" &&
+    parsedOptions.for !== "show"
+  ) {
+    throw new Error("Change context --for must be either diff or show.");
+  }
+
+  const commandKind = parsedOptions.for as "diff" | "show" | undefined;
+  if (subcommand === "path") {
+    return {
+      kind: "change-context-path",
+      rev: parsedRev,
+      commandKind,
+      output: resolveJsonOutput(parsedOptions),
+    };
+  }
+
+  return {
+    kind: "change-context-validate",
+    rev: parsedRev,
+    commandKind,
+    strict: Boolean(parsedOptions.strict),
+    output: resolveJsonOutput(parsedOptions),
+  };
+}
+
 /** Parse `hunk skill ...` for bundled skill discovery commands. */
 async function parseSkillCommand(tokens: string[]): Promise<HelpCommandInput> {
   const [subcommand, ...rest] = tokens;
@@ -1364,6 +1463,8 @@ export async function parseCli(argv: string[]): Promise<ParsedCliInput> {
       return parseStashCommand(rest, argv);
     case "session":
       return parseSessionCommand(rest);
+    case "change-context":
+      return parseChangeContextCommand(rest);
     case "skill":
       return parseSkillCommand(rest);
     case "daemon":

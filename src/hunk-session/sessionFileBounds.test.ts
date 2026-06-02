@@ -357,7 +357,7 @@ describe("session reload filesystem bounds", () => {
     }
   });
 
-  test("rejects agent context sidecars outside the initial root", () => {
+  test("rejects change context files outside the initial root", () => {
     const repo = mkdtempSync(join(tmpdir(), "hunk-reload-bounds-agent-repo-"));
     const outside = mkdtempSync(join(tmpdir(), "hunk-reload-bounds-agent-secret-"));
     const sidecar = join(outside, "notes.json");
@@ -375,14 +375,14 @@ describe("session reload filesystem bounds", () => {
           staged: false,
           options: { agentContext: sidecar },
         }),
-      ).toThrow("agent context path outside the initial Hunk root");
+      ).toThrow("change context path outside the initial Hunk root");
     } finally {
       rmSync(repo, { force: true, recursive: true });
       rmSync(outside, { force: true, recursive: true });
     }
   });
 
-  test("rejects agent context sidecars that escape through symlinks", () => {
+  test("rejects change context files that escape through symlinks", () => {
     const repo = mkdtempSync(join(tmpdir(), "hunk-reload-bounds-agent-link-repo-"));
     const outside = mkdtempSync(join(tmpdir(), "hunk-reload-bounds-agent-link-outside-"));
     const sidecar = join(outside, "notes.json");
@@ -408,7 +408,7 @@ describe("session reload filesystem bounds", () => {
           staged: false,
           options: { agentContext: join(link, "notes.json") },
         }),
-      ).toThrow("agent context path outside the initial Hunk root");
+      ).toThrow("change context path outside the initial Hunk root");
     } finally {
       rmSync(repo, { force: true, recursive: true });
       rmSync(outside, { force: true, recursive: true });
@@ -437,7 +437,7 @@ describe("session reload filesystem bounds", () => {
           staged: false,
           options: { agentContext: "-" },
         }),
-      ).toThrow("--agent-context -");
+      ).toThrow("--change-context -");
     } finally {
       rmSync(repo, { force: true, recursive: true });
     }

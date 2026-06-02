@@ -50,6 +50,11 @@ async function main() {
     process.exit(0);
   }
 
+  if (startupPlan.kind === "change-context-command") {
+    process.stdout.write(startupPlan.text);
+    process.exit(startupPlan.exitCode);
+  }
+
   if (startupPlan.kind === "plain-text-pager") {
     await pagePlainText(startupPlan.text);
     process.exit(0);

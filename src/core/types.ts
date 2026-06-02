@@ -41,6 +41,23 @@ export interface AgentContext {
   files: AgentFileContext[];
 }
 
+export interface ReviewAttention {
+  level: "low" | "medium" | "high";
+  summary: string;
+  rationale?: string;
+}
+
+export interface ChangeContextIdentity {
+  vcs: "jj";
+  key: "jj-change-id";
+  id: string;
+}
+
+export interface ChangeContext extends AgentContext {
+  change?: ChangeContextIdentity;
+  reviewAttention?: ReviewAttention;
+}
+
 export interface DiffFile {
   id: string;
   path: string;
@@ -76,14 +93,19 @@ export interface Changeset {
   title: string;
   summary?: string;
   agentSummary?: string;
+  reviewAttention?: ReviewAttention;
   files: DiffFile[];
 }
+
+export type ChangeContextKey = "none" | "jj-change-id";
 
 export interface CommonOptions {
   mode?: LayoutMode;
   vcs?: VcsMode;
   theme?: string;
   agentContext?: string;
+  changeContextDir?: string;
+  changeContextKey?: ChangeContextKey;
   pager?: boolean;
   watch?: boolean;
   excludeUntracked?: boolean;
@@ -172,6 +194,25 @@ export interface PagerCommandInput {
 export interface DaemonServeCommandInput {
   kind: "daemon-serve";
 }
+
+export interface ChangeContextPathCommandInput {
+  kind: "change-context-path";
+  rev?: string;
+  commandKind?: "diff" | "show";
+  output: "text" | "json";
+}
+
+export interface ChangeContextValidateCommandInput {
+  kind: "change-context-validate";
+  rev?: string;
+  commandKind?: "diff" | "show";
+  strict: boolean;
+  output: "text" | "json";
+}
+
+export type ChangeContextCommandInput =
+  | ChangeContextPathCommandInput
+  | ChangeContextValidateCommandInput;
 
 export type SessionCommandOutput = "text" | "json";
 
@@ -352,6 +393,7 @@ export type ParsedCliInput =
   | HelpCommandInput
   | PagerCommandInput
   | DaemonServeCommandInput
+  | ChangeContextCommandInput
   | SessionCommandInput;
 
 export interface AppBootstrap {

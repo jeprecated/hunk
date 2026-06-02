@@ -1,8 +1,21 @@
 import { resolve as resolvePath } from "node:path";
-import type { AgentContext, AgentFileContext } from "./types";
+import type {
+  AgentContext,
+  AgentFileContext,
+  ChangeContext,
+  ChangeContextIdentity,
+  ReviewAttention,
+} from "./types";
 
 interface AgentContextLoadOptions {
   cwd?: string;
+  expectedChangeId?: string;
+  warn?: (message: string) => void;
+}
+
+/** Emit one non-fatal Change Context warning before the TUI starts. */
+function defaultWarn(message: string) {
+  process.stderr.write(`${message}\n`);
 }
 
 /** Normalize one file entry from the optional agent-context sidecar JSON. */
@@ -82,11 +95,74 @@ function normalizeAnnotationFile(file: unknown): AgentFileContext {
   };
 }
 
-/** Load the optional agent-context sidecar from a file path or stdin. */
+function normalizeReviewAttention(value: unknown, warn: (message: string) => void) {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    warn("Ignoring malformed Review Attention: expected an object.");
+    return undefined;
+  }
+
+  const item = value as Record<string, unknown>;
+  const level = item.level;
+  const summary = item.summary;
+  if (level !== "low" && level !== "medium" && level !== "high") {
+    warn("Ignoring malformed Review Attention: level must be low, medium, or high.");
+    return undefined;
+  }
+
+  if (typeof summary !== "string" || summary.length === 0) {
+    warn("Ignoring malformed Review Attention: summary is required.");
+    return undefined;
+  }
+
+  return {
+    level,
+    summary,
+    rationale: typeof item.rationale === "string" ? item.rationale : undefined,
+  } satisfies ReviewAttention;
+}
+
+function normalizeChangeIdentity(
+  value: unknown,
+  expectedChangeId: string | undefined,
+  warn: (message: string) => void,
+) {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    warn("Ignoring malformed Change Context identity: expected an object.");
+    return undefined;
+  }
+
+  const item = value as Record<string, unknown>;
+  if (item.vcs !== "jj" || item.key !== "jj-change-id" || typeof item.id !== "string") {
+    warn("Ignoring malformed Change Context identity: expected jj change id metadata.");
+    return undefined;
+  }
+
+  if (expectedChangeId && item.id !== expectedChangeId) {
+    warn(
+      `Change Context identity ${item.id} does not match resolved jj change ${expectedChangeId}.`,
+    );
+  }
+
+  return {
+    vcs: "jj",
+    key: "jj-change-id",
+    id: item.id,
+  } satisfies ChangeContextIdentity;
+}
+
+/** Load the optional Change Context File from a file path or stdin. */
 export async function loadAgentContext(
   pathOrDash?: string,
-  { cwd = process.cwd() }: AgentContextLoadOptions = {},
-): Promise<AgentContext | null> {
+  { cwd = process.cwd(), expectedChangeId, warn = defaultWarn }: AgentContextLoadOptions = {},
+): Promise<ChangeContext | null> {
   if (!pathOrDash) {
     return null;
   }
@@ -107,6 +183,8 @@ export async function loadAgentContext(
   return {
     version: typeof parsed.version === "number" ? parsed.version : 1,
     summary: typeof parsed.summary === "string" ? parsed.summary : undefined,
+    change: normalizeChangeIdentity(parsed.change, expectedChangeId, warn),
+    reviewAttention: normalizeReviewAttention(parsed.reviewAttention, warn),
     files,
   };
 }

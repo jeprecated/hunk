@@ -17,6 +17,7 @@ import type {
   AgentAnnotation,
   DiffFile,
   LayoutMode,
+  ReviewAttention,
   UserNoteLineTarget,
 } from "../../../core/types";
 import type { FileSourceStatus } from "../../diff/expandCollapsedRows";
@@ -42,7 +43,6 @@ import {
   buildInStreamFileHeaderHeights,
   collectIntersectingFileSectionIds,
   findHeaderOwningFileSection,
-  shouldRenderInStreamFileHeader,
   type FileSectionLayout,
 } from "../../lib/fileSectionLayout";
 import { diffHunkId, diffSectionId } from "../../lib/ids";
@@ -171,8 +171,120 @@ const EMPTY_EXPANDED_GAPS_BY_FILE_ID: Record<string, ReadonlySet<string>> = {};
 const EMPTY_SOURCE_STATUS_BY_FILE_ID: Record<string, FileSourceStatus> = {};
 const NOOP_TOGGLE_GAP = () => {};
 
+function wrapBannerText(text: string, width: number) {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let current = "";
+
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (next.length > width && current) {
+      lines.push(current);
+      current = word;
+      continue;
+    }
+    current = next;
+  }
+
+  if (current) {
+    lines.push(current);
+  }
+
+  return lines.length > 0 ? lines : [""];
+}
+
+function reviewAttentionLabel(reviewAttention: ReviewAttention) {
+  return `Review attention: ${reviewAttention.level} — ${reviewAttention.summary}`;
+}
+
+/** Render compact change-level context before the first file in the review stream. */
+function ChangeContextBanner({
+  summary,
+  reviewAttention,
+  theme,
+  width,
+}: {
+  summary?: string;
+  reviewAttention?: ReviewAttention;
+  theme: AppTheme;
+  width: number;
+}) {
+  const innerWidth = Math.max(1, width - 4);
+  const summaryLines = summary ? wrapBannerText(summary, innerWidth) : [];
+  const attentionLines = reviewAttention
+    ? wrapBannerText(reviewAttentionLabel(reviewAttention), innerWidth)
+    : [];
+  const rationaleLines = reviewAttention?.rationale
+    ? wrapBannerText(reviewAttention.rationale, innerWidth)
+    : [];
+
+  return (
+    <box
+      style={{
+        width: "100%",
+        border: true,
+        borderColor: theme.noteBorder,
+        backgroundColor: theme.noteBackground,
+        paddingLeft: 1,
+        paddingRight: 1,
+        flexDirection: "column",
+      }}
+    >
+      {summaryLines.map((line, index) => (
+        <box key={`summary:${index}`} style={{ width: "100%", height: 1 }}>
+          <text fg={theme.text}>{line.padEnd(innerWidth)}</text>
+        </box>
+      ))}
+      {attentionLines.map((line, index) => (
+        <box key={`attention:${index}`} style={{ width: "100%", height: 1 }}>
+          <text fg={theme.accent}>{line.padEnd(innerWidth)}</text>
+        </box>
+      ))}
+      {rationaleLines.map((line, index) => (
+        <box key={`rationale:${index}`} style={{ width: "100%", height: 1 }}>
+          <text fg={theme.muted}>{line.padEnd(innerWidth)}</text>
+        </box>
+      ))}
+    </box>
+  );
+}
+
+function buildReviewStreamFileHeaderHeights(files: DiffFile[], hasLeadingBanner: boolean) {
+  const heights = buildInStreamFileHeaderHeights(files);
+  if (hasLeadingBanner && heights.length > 0) {
+    heights[0] = 1;
+  }
+
+  return heights;
+}
+
+function measureChangeContextBannerHeight({
+  summary,
+  reviewAttention,
+  width,
+}: {
+  summary?: string;
+  reviewAttention?: ReviewAttention;
+  width: number;
+}) {
+  if (!summary && !reviewAttention) {
+    return 0;
+  }
+
+  const innerWidth = Math.max(1, width - 4);
+  return (
+    2 +
+    (summary ? wrapBannerText(summary, innerWidth).length : 0) +
+    (reviewAttention
+      ? wrapBannerText(reviewAttentionLabel(reviewAttention), innerWidth).length
+      : 0) +
+    (reviewAttention?.rationale ? wrapBannerText(reviewAttention.rationale, innerWidth).length : 0)
+  );
+}
+
 /** Render the main multi-file review stream. */
 export function DiffPane({
+  agentSummary,
   codeHorizontalOffset = 0,
   diffContentWidth,
   expandedGapsByFileId = EMPTY_EXPANDED_GAPS_BY_FILE_ID,
@@ -191,6 +303,7 @@ export function DiffPane({
   copyDecorations = false,
   screenLeft = 0,
   screenTop = 0,
+  reviewAttention,
   showAgentNotes,
   showLineNumbers,
   showHunkHeaders,
@@ -219,6 +332,7 @@ export function DiffPane({
   onToggleGap = NOOP_TOGGLE_GAP,
   onViewportCenteredHunkChange,
 }: {
+  agentSummary?: string;
   codeHorizontalOffset?: number;
   diffContentWidth: number;
   expandedGapsByFileId?: Record<string, ReadonlySet<string>>;
@@ -237,6 +351,7 @@ export function DiffPane({
   copyDecorations?: boolean;
   screenLeft?: number;
   screenTop?: number;
+  reviewAttention?: ReviewAttention;
   showAgentNotes: boolean;
   showLineNumbers: boolean;
   showHunkHeaders: boolean;
@@ -640,7 +755,11 @@ export function DiffPane({
     };
   }, [activateRapidScrollOverscan, clearAddNoteHoverForScroll, files.length, scrollRef]);
 
-  const sectionHeaderHeights = useMemo(() => buildInStreamFileHeaderHeights(files), [files]);
+  const hasChangeContextBanner = Boolean(agentSummary || reviewAttention);
+  const sectionHeaderHeights = useMemo(
+    () => buildReviewStreamFileHeaderHeights(files, hasChangeContextBanner),
+    [files, hasChangeContextBanner],
+  );
   const reserveAddNoteColumn = Boolean(onStartUserNoteAtHunk);
 
   const baseSectionGeometry = useMemo(
@@ -673,49 +792,11 @@ export function DiffPane({
       wrapLines,
     ],
   );
-  const baseEstimatedBodyHeights = useMemo(
-    () => baseSectionGeometry.map((metrics) => metrics.bodyHeight),
-    [baseSectionGeometry],
-  );
-  const baseFileSectionLayouts = useMemo(
-    () => buildFileSectionLayouts(files, baseEstimatedBodyHeights, sectionHeaderHeights),
-    [baseEstimatedBodyHeights, files, sectionHeaderHeights],
-  );
-
-  const visibleViewportFileIds = useMemo(() => {
-    const overscanTerminalRows = Math.max(8, rapidScrollOverscanRows);
-    const minVisibleY = Math.max(0, scrollViewport.top - overscanTerminalRows);
-    const maxVisibleY = scrollViewport.top + scrollViewport.height + overscanTerminalRows;
-    return collectIntersectingFileSectionIds(baseFileSectionLayouts, minVisibleY, maxVisibleY);
-  }, [baseFileSectionLayouts, rapidScrollOverscanRows, scrollViewport.height, scrollViewport.top]);
-
-  const visibleAgentNotesByFile = useMemo(() => {
-    const next = new Map<string, VisibleAgentNote[]>();
-
-    const fileIdsToMeasure = new Set(visibleViewportFileIds);
-    // Always measure the selected file with its real note rows so hunk navigation can compute
-    // accurate bounds even before the file scrolls into the visible viewport.
-    if (selectedFileId) {
-      fileIdsToMeasure.add(selectedFileId);
-    }
-
-    for (const fileId of fileIdsToMeasure) {
-      const visibleNotes = allAgentNotesByFile.get(fileId);
-      if (visibleNotes && visibleNotes.length > 0) {
-        next.set(fileId, visibleNotes);
-      }
-    }
-
-    return next;
-  }, [allAgentNotesByFile, selectedFileId, showAgentNotes, visibleViewportFileIds]);
-
-  // Measure with the *full* set of agent notes per file, not just the visible-viewport set.
-  // The visible set is correct for rendering (skip painting cards on off-screen files), but
-  // using it here makes total content height fluctuate with scroll position: as a file with
-  // notes leaves the viewport, its measurement shrinks back to the no-notes baseline, which
-  // shrinks `totalContentHeight`, which tightens `clampReviewScrollTop`'s ceiling, which
-  // snaps the viewport upward by the height of the off-top note rows. Always include notes
-  // in geometry for stable bottom-edge clamping.
+  // Measure and render with the *full* set of agent notes per file, not just the visible-viewport
+  // set. Omitting offscreen notes makes actual content height fluctuate with scroll position: as a
+  // file with notes leaves the viewport, its rendered height shrinks back to the no-notes baseline.
+  // That tightens `clampReviewScrollTop`'s ceiling and snaps the viewport upward by the height of
+  // the off-top note rows.
   const sectionGeometry = useMemo(
     () =>
       files.map((file, index) => {
@@ -753,13 +834,24 @@ export function DiffPane({
       wrapLines,
     ],
   );
+  const changeContextBannerHeight = measureChangeContextBannerHeight({
+    summary: agentSummary,
+    reviewAttention,
+    width: diffContentWidth,
+  });
   const estimatedBodyHeights = useMemo(
     () => sectionGeometry.map((metrics) => metrics.bodyHeight),
     [sectionGeometry],
   );
   const fileSectionLayouts = useMemo(
-    () => buildFileSectionLayouts(files, estimatedBodyHeights, sectionHeaderHeights),
-    [estimatedBodyHeights, files, sectionHeaderHeights],
+    () =>
+      buildFileSectionLayouts(
+        files,
+        estimatedBodyHeights,
+        sectionHeaderHeights,
+        changeContextBannerHeight,
+      ),
+    [changeContextBannerHeight, estimatedBodyHeights, files, sectionHeaderHeights],
   );
   const totalContentHeight = fileSectionLayouts[fileSectionLayouts.length - 1]?.sectionBottom ?? 0;
 
@@ -767,7 +859,7 @@ export function DiffPane({
   // immediately after imperative scrolls instead of waiting for the polled viewport snapshot.
   const effectiveScrollTop = scrollRef.current?.scrollTop ?? scrollViewport.top;
   const pinnedHeaderFile = useMemo(() => {
-    if (files.length === 0) {
+    if (files.length === 0 || effectiveScrollTop < changeContextBannerHeight) {
       return null;
     }
 
@@ -780,7 +872,7 @@ export function DiffPane({
     );
 
     return owner ? (files[owner.sectionIndex] ?? null) : (files[0] ?? null);
-  }, [effectiveScrollTop, fileSectionLayouts, files]);
+  }, [changeContextBannerHeight, effectiveScrollTop, fileSectionLayouts, files]);
   const pinnedHeaderFileId = pinnedHeaderFile?.id ?? null;
 
   const copySelectionContext = useMemo(
@@ -1314,8 +1406,13 @@ export function DiffPane({
       return null;
     }
 
+    const selectedFileSectionLayout = fileSectionLayouts[selectedFileIndex];
+    if (!selectedFileSectionLayout) {
+      return null;
+    }
+
     const sectionRelativeHunkTop =
-      selectedEstimatedHunkBounds.top - selectedEstimatedHunkBounds.sectionTop;
+      selectedEstimatedHunkBounds.top - selectedFileSectionLayout.bodyTop;
     const sectionRelativeHunkBottom = sectionRelativeHunkTop + selectedEstimatedHunkBounds.height;
     const noteRow = geometry.rowBounds.find(
       (row) =>
@@ -1332,7 +1429,13 @@ export function DiffPane({
       top: selectedEstimatedHunkBounds.sectionTop + noteRow.top,
       height: noteRow.height,
     };
-  }, [scrollToNote, sectionGeometry, selectedEstimatedHunkBounds, selectedFileIndex]);
+  }, [
+    fileSectionLayouts,
+    scrollToNote,
+    sectionGeometry,
+    selectedEstimatedHunkBounds,
+    selectedFileIndex,
+  ]);
   const selectedEstimatedHunkTop = selectedEstimatedHunkBounds?.top ?? null;
   const selectedEstimatedHunkHeight = selectedEstimatedHunkBounds?.height ?? null;
   const selectedEstimatedHunkStartRowId = selectedEstimatedHunkBounds?.startRowId ?? null;
@@ -1394,7 +1497,9 @@ export function DiffPane({
           previousFiles,
           previousSectionMetrics,
           previousScrollTop,
-          buildInStreamFileHeaderHeights(previousFiles),
+          buildReviewStreamFileHeaderHeights(previousFiles, hasChangeContextBanner),
+          undefined,
+          changeContextBannerHeight,
         );
       if (anchor) {
         const nextTop = resolveViewportRowAnchorTop(
@@ -1402,6 +1507,7 @@ export function DiffPane({
           sectionGeometry,
           anchor,
           sectionHeaderHeights,
+          changeContextBannerHeight,
         );
         const restoreViewportAnchor = () => {
           scrollRef.current?.scrollTo(nextTop);
@@ -1427,7 +1533,10 @@ export function DiffPane({
     }
 
     if ((layoutChanged || wrapChanged) && previousSectionMetrics && previousFiles.length > 0) {
-      const previousSectionHeaderHeights = buildInStreamFileHeaderHeights(previousFiles);
+      const previousSectionHeaderHeights = buildReviewStreamFileHeaderHeights(
+        previousFiles,
+        hasChangeContextBanner,
+      );
       const previousScrollTop =
         // Prefer the synchronously captured pre-toggle position so anchor restoration does not
         // race the polling-based viewport snapshot.
@@ -1443,6 +1552,7 @@ export function DiffPane({
         previousScrollTop,
         previousSectionHeaderHeights,
         lastViewportRowAnchorRef.current?.stableKey,
+        changeContextBannerHeight,
       );
       if (anchor) {
         const nextTop = resolveViewportRowAnchorTop(
@@ -1450,6 +1560,7 @@ export function DiffPane({
           sectionGeometry,
           anchor,
           sectionHeaderHeights,
+          changeContextBannerHeight,
         );
         const restoreViewportAnchor = () => {
           scrollRef.current?.scrollTo(nextTop);
@@ -1482,8 +1593,10 @@ export function DiffPane({
     previousSectionGeometryRef.current = sectionGeometry;
     previousFilesRef.current = files;
   }, [
+    changeContextBannerHeight,
     draftNote?.id,
     files,
+    hasChangeContextBanner,
     layout,
     layoutToggleRequestId,
     layoutToggleScrollTop,
@@ -1509,12 +1622,20 @@ export function DiffPane({
       currentScrollTop,
       sectionHeaderHeights,
       lastViewportRowAnchorRef.current?.stableKey,
+      changeContextBannerHeight,
     );
 
     if (nextAnchor) {
       lastViewportRowAnchorRef.current = nextAnchor;
     }
-  }, [files, scrollRef, scrollViewport.top, sectionGeometry, sectionHeaderHeights]);
+  }, [
+    changeContextBannerHeight,
+    files,
+    scrollRef,
+    scrollViewport.top,
+    sectionGeometry,
+    sectionHeaderHeights,
+  ]);
 
   useLayoutEffect(() => {
     if (previousSelectedFileTopAlignRequestIdRef.current === selectedFileTopAlignRequestId) {
@@ -1528,7 +1649,10 @@ export function DiffPane({
       return;
     }
 
-    // Sidebar navigation should make the selected file immediately own the viewport top.
+    // Sidebar/file navigation should make the selected file immediately own the viewport top.
+    // Cancel any in-flight hunk/note settle so stale note-reveal retries cannot override the
+    // explicit file-top alignment while React commits the file id and hunk index updates.
+    pendingSelectionSettleRef.current = false;
     suppressViewportSelectionSync();
     pendingFileTopAlignFileIdRef.current = selectedFileId;
     scrollFileHeaderToTop(selectedFileId);
@@ -1596,6 +1720,10 @@ export function DiffPane({
       prevSelectedAnchorIdRef.current = null;
       prevPinnedHeaderFileIdRef.current = pinnedHeaderFileId;
       pendingSelectionSettleRef.current = false;
+      return;
+    }
+
+    if (pendingFileTopAlignFileIdRef.current) {
       return;
     }
 
@@ -1785,6 +1913,14 @@ export function DiffPane({
                 key={`diff-content:${layout}:${wrapLines ? "wrap" : "nowrap"}:${width}`}
                 style={{ width: "100%", flexDirection: "column", overflow: "visible" }}
               >
+                {changeContextBannerHeight > 0 ? (
+                  <ChangeContextBanner
+                    summary={agentSummary}
+                    reviewAttention={reviewAttention}
+                    theme={theme}
+                    width={diffContentWidth}
+                  />
+                ) : null}
                 {fileRenderItems.map((item) => {
                   if (item.kind === "spacer") {
                     return (
@@ -1816,7 +1952,7 @@ export function DiffPane({
                       shouldLoadHighlight={highlightPrefetchFileIds.has(file.id)}
                       sectionGeometry={sectionGeometry[index]}
                       separatorWidth={separatorWidth}
-                      showHeader={shouldRenderInStreamFileHeader(index)}
+                      showHeader={(sectionHeaderHeights[index] ?? 0) > 0}
                       showSeparator={index > 0}
                       showLineNumbers={showLineNumbers}
                       showHunkHeaders={showHunkHeaders}
@@ -1829,7 +1965,7 @@ export function DiffPane({
                       }
                       viewWidth={diffContentWidth}
                       visibleAgentNotes={
-                        visibleAgentNotesByFile.get(file.id) ?? EMPTY_VISIBLE_AGENT_NOTES
+                        allAgentNotesByFile.get(file.id) ?? EMPTY_VISIBLE_AGENT_NOTES
                       }
                       visibleBodyBounds={visibleBodyBoundsByFile.get(file.id)}
                       onHover={() => setHoveredFileForRowActions(file.id)}

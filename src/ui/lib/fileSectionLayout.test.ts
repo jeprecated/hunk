@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildFileSectionLayouts,
   collectIntersectingFileSectionIds,
   findFileSectionAtOffset,
   type FileSectionLayout,
 } from "./fileSectionLayout";
+import { createTestDiffFile, lines } from "../../../test/helpers/diff-helpers";
 
 const layouts: FileSectionLayout[] = [
   {
@@ -36,6 +38,30 @@ const layouts: FileSectionLayout[] = [
 ];
 
 describe("fileSectionLayout helpers", () => {
+  test("buildFileSectionLayouts offsets files after a leading review banner", () => {
+    const files = [
+      createTestDiffFile({ id: "alpha", path: "alpha.ts", before: lines("a"), after: lines("b") }),
+      createTestDiffFile({ id: "beta", path: "beta.ts", before: lines("a"), after: lines("b") }),
+    ];
+
+    expect(buildFileSectionLayouts(files, [3, 4], undefined, 2)).toMatchObject([
+      {
+        fileId: "alpha",
+        sectionTop: 2,
+        headerTop: 2,
+        bodyTop: 2,
+        sectionBottom: 5,
+      },
+      {
+        fileId: "beta",
+        sectionTop: 5,
+        headerTop: 6,
+        bodyTop: 7,
+        sectionBottom: 11,
+      },
+    ]);
+  });
+
   test("findFileSectionAtOffset returns the containing section and clamps past the ends", () => {
     expect(findFileSectionAtOffset([], 3)).toBeNull();
     expect(findFileSectionAtOffset(layouts, -5)?.fileId).toBe("alpha");

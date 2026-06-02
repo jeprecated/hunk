@@ -7,6 +7,7 @@ import {
 import { createTwoFilesPatch } from "diff";
 import { resolve as resolvePath } from "node:path";
 import { findAgentFileContext, loadAgentContext } from "./agent";
+import { resolveChangeContextPath } from "./changeContextResolution";
 import { createSkippedBinaryMetadata, isProbablyBinaryFile } from "./binary";
 import { buildDiffFile, type BuildDiffFileOptions, type DiffFileSourceContext } from "./diffFile";
 import { createFileSourceFetcher, type FileSourceSpec } from "./fileSource";
@@ -15,7 +16,7 @@ import { normalizePatchText, stripTerminalControl } from "./patch/normalize";
 import { getConfiguredVcsAdapter, loadVcsReview, operationFromInput } from "./vcs";
 import type {
   AppBootstrap,
-  AgentContext,
+  ChangeContext,
   Changeset,
   CliInput,
   CustomThemeConfig,
@@ -168,7 +169,7 @@ function hasLineMoveKinds(moveKinds: DiffLineMoveKinds | undefined) {
 }
 
 /** Reorder files to follow agent-context narrative order when a sidecar provides one. */
-export function orderDiffFiles(files: DiffFile[], agentContext: AgentContext | null) {
+export function orderDiffFiles(files: DiffFile[], agentContext: ChangeContext | null) {
   if (!agentContext || agentContext.files.length === 0) {
     return files;
   }
@@ -209,7 +210,7 @@ function normalizePatchChangeset(
   patchText: string,
   title: string,
   sourceLabel: string,
-  agentContext: AgentContext | null,
+  agentContext: ChangeContext | null,
   perFileOptions?: Pick<BuildDiffFileOptions, "sourceFetcherBuilder">,
 ): Changeset {
   const lineMoveKinds = collectLineMoveKinds(patchText);
@@ -225,6 +226,7 @@ function normalizePatchChangeset(
       title,
       summary: normalizedPatchText.trim() || undefined,
       agentSummary: agentContext?.summary,
+      reviewAttention: agentContext?.reviewAttention,
       files: [],
     };
   }
@@ -242,6 +244,7 @@ function normalizePatchChangeset(
         .filter(Boolean)
         .join("\n\n") || undefined,
     agentSummary: agentContext?.summary,
+    reviewAttention: agentContext?.reviewAttention,
     files: metadataFiles.map((metadata, index) =>
       buildDiffFile(
         metadata,
@@ -281,13 +284,14 @@ function buildBinaryFileDiffChangeset(
   title: string,
   leftPath: string,
   rightPath: string,
-  agentContext: AgentContext | null,
+  agentContext: ChangeContext | null,
 ) {
   return {
     id: `pair:${displayPath}`,
     sourceLabel: input.kind === "difftool" ? "git difftool" : "file compare",
     title,
     agentSummary: agentContext?.summary,
+    reviewAttention: agentContext?.reviewAttention,
     files: [
       buildDiffFile(
         createSkippedBinaryMetadata(displayPath, resolveBinaryComparisonType(leftPath, rightPath)),
@@ -307,7 +311,7 @@ function buildBinaryFileDiffChangeset(
 /** Build a changeset by diffing two concrete files on disk. */
 async function loadFileDiffChangeset(
   input: FileCommandInput | DiffToolCommandInput,
-  agentContext: AgentContext | null,
+  agentContext: ChangeContext | null,
   cwd = process.cwd(),
 ) {
   const leftPath = resolvePath(cwd, input.left);
@@ -355,6 +359,7 @@ async function loadFileDiffChangeset(
     sourceLabel: input.kind === "difftool" ? "git difftool" : "file compare",
     title,
     agentSummary: agentContext?.summary,
+    reviewAttention: agentContext?.reviewAttention,
     files: [
       buildDiffFile(metadata, patch, 0, displayPath, agentContext, {
         previousPath: basename(input.left),
@@ -370,7 +375,7 @@ async function loadFileDiffChangeset(
 /** Build a changeset from an adapter-backed VCS review operation. */
 async function loadVcsChangeset(
   input: VcsDiffCommandInput | VcsShowCommandInput | VcsStashShowCommandInput,
-  agentContext: AgentContext | null,
+  agentContext: ChangeContext | null,
   cwd = process.cwd(),
   gitExecutable = "git",
 ) {
@@ -398,7 +403,7 @@ async function loadVcsChangeset(
 /** Build a changeset from patch text supplied by file or stdin. */
 async function loadPatchChangeset(
   input: PatchCommandInput,
-  agentContext: AgentContext | null,
+  agentContext: ChangeContext | null,
   cwd = process.cwd(),
 ) {
   const patchText =
@@ -421,8 +426,10 @@ export async function loadAppBootstrap(
   input: CliInput,
   { cwd = process.cwd(), customTheme, gitExecutable = "git" }: LoadAppBootstrapOptions = {},
 ): Promise<AppBootstrap> {
-  const agentContext = await loadAgentContext(input.options.agentContext, {
+  const resolvedContextPath = resolveChangeContextPath(input, { cwd, requireExisting: true });
+  const agentContext = await loadAgentContext(resolvedContextPath?.path, {
     cwd,
+    expectedChangeId: resolvedContextPath?.changeId,
   });
 
   let changeset: Changeset;

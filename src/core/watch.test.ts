@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DEFAULT_CHANGE_CONTEXT_DIR } from "./changeContextResolution";
 import { computeWatchSignature } from "./watch";
 import type { CliInput } from "./types";
 
@@ -44,6 +45,46 @@ function createTempRepo(prefix: string) {
   return dir;
 }
 
+function jj(cwd: string, ...cmd: string[]) {
+  const proc = Bun.spawnSync(
+    [
+      "jj",
+      "--config",
+      "signing.behavior=drop",
+      "--config",
+      'user.name="Test User"',
+      "--config",
+      "user.email=test@example.com",
+      ...cmd,
+    ],
+    {
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    },
+  );
+
+  if (proc.exitCode !== 0) {
+    const stderr = Buffer.from(proc.stderr).toString("utf8");
+    throw new Error(stderr.trim() || `jj ${cmd.join(" ")} failed`);
+  }
+
+  return Buffer.from(proc.stdout).toString("utf8");
+}
+
+function createTempJjRepo(prefix: string) {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+  tempDirs.push(dir);
+  jj(tmpdir(), "git", "init", "--colocate", dir);
+  writeFileSync(join(dir, "example.ts"), "export const value = 1;\n");
+  return dir;
+}
+
+function currentChangeId(repo: string) {
+  return jj(repo, "log", "--no-graph", "-r", "@", "-T", 'change_id ++ "\\n"').trim();
+}
+
 function withCwd<T>(cwd: string, callback: () => T) {
   const previousCwd = process.cwd();
   process.chdir(cwd);
@@ -75,6 +116,9 @@ function createGitInput({
 afterEach(() => {
   cleanupTempDirs();
 });
+
+// Keep jj-backed watch coverage opt-in on machines with the external CLI installed.
+const jjTest = Bun.which("jj") ? test : test.skip;
 
 describe("computeWatchSignature", () => {
   test("does not embed full untracked file contents in git watch signatures", () => {
@@ -151,5 +195,49 @@ describe("computeWatchSignature", () => {
     );
 
     expect(changedSignature).not.toEqual(initialSignature);
+  });
+
+  jjTest("tracks a convention-resolved missing Change Context File candidate", () => {
+    const dir = createTempJjRepo("hunk-watch-change-context-missing-");
+    const changeId = currentChangeId(dir);
+    const contextPath = join(dir, DEFAULT_CHANGE_CONTEXT_DIR, `${changeId}.json`);
+
+    const initialSignature = withCwd(dir, () =>
+      computeWatchSignature({
+        kind: "vcs",
+        staged: false,
+        options: { vcs: "jj", changeContextKey: "jj-change-id" },
+      }),
+    );
+
+    expect(initialSignature).toContain(`change-context:${contextPath}:missing`);
+  });
+
+  jjTest("changes the signature when a convention Change Context File is created", () => {
+    const dir = createTempJjRepo("hunk-watch-change-context-created-");
+    const changeId = currentChangeId(dir);
+    const contextDir = join(dir, DEFAULT_CHANGE_CONTEXT_DIR);
+    const contextPath = join(contextDir, `${changeId}.json`);
+
+    const missingSignature = withCwd(dir, () =>
+      computeWatchSignature({
+        kind: "vcs",
+        staged: false,
+        options: { vcs: "jj", changeContextKey: "jj-change-id" },
+      }),
+    );
+    mkdirSync(contextDir, { recursive: true });
+    writeFileSync(contextPath, '{"version":1,"summary":"created","files":[]}\n');
+    const createdSignature = withCwd(dir, () =>
+      computeWatchSignature({
+        kind: "vcs",
+        staged: false,
+        options: { vcs: "jj", changeContextKey: "jj-change-id" },
+      }),
+    );
+
+    expect(missingSignature).not.toEqual(createdSignature);
+    expect(createdSignature).toContain(`change-context:${contextPath}:`);
+    expect(createdSignature).not.toContain(`${contextPath}:missing`);
   });
 });

@@ -130,7 +130,7 @@ For normal worktree use, prefer `--repo /path/to/worktree`. Reach for `--session
 
 ## Alternative workflow: load agent comments from a file
 
-Use `--agent-context` when you already have agent-written rationale or notes in a JSON sidecar file and want to render them beside the diff.
+Use `--agent-context` when you already have agent-written rationale or notes in a JSON sidecar file and want to render them beside the diff. `--change-context` is also accepted as an alias, and is the clearer spelling for jj Change Context Files.
 
 ```bash
 hunk diff --agent-context notes.json
@@ -138,6 +138,30 @@ hunk patch change.patch --agent-context notes.json
 ```
 
 For a compact real example, see [`examples/3-agent-review-demo/agent-context.json`](../examples/3-agent-review-demo/agent-context.json).
+
+## Automatic Change Context discovery for jj
+
+In jj repos, Hunk can discover ignored local Change Context Files by full canonical jj change ID:
+
+```toml
+change_context_key = "jj-change-id"
+agent_notes = true
+```
+
+By convention, files live at:
+
+```text
+.hunk/change-context/<full-jj-change-id>.json
+```
+
+If `change_context_dir` is omitted, Hunk uses `.hunk/change-context` relative to the repo root. Relative custom directories also resolve from the repo root. Missing files are normal and do not warn. When passing one of these files explicitly in jj workflows, prefer the `--change-context` spelling; `--agent-context` remains available for existing sidecar workflows.
+
+Helpful commands:
+
+```bash
+hunk change-context path --for diff          # path for the current jj change
+hunk change-context path @- --for show --json
+```
 
 ## Practical defaults
 

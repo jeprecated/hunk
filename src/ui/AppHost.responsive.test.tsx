@@ -93,18 +93,18 @@ describe("responsive app", () => {
     const { ultraWide, full, medium, tight } = await captureResponsiveFrames();
 
     expect((ultraWide.match(/alpha\.ts/g) ?? []).length).toBe(2);
-    expect(ultraWide).not.toContain("Changeset summary");
+    expect(ultraWide).toContain("Changeset summary");
 
     expect((full.match(/alpha\.ts/g) ?? []).length).toBe(2);
-    expect(full).not.toContain("Changeset summary");
+    expect(full).toContain("Changeset summary");
     expect(full).toMatch(/▌.*▌/);
 
     expect(medium).not.toContain("Files");
-    expect(medium).not.toContain("Changeset summary");
+    expect(medium).toContain("Changeset summary");
     expect(medium).toMatch(/▌.*▌/);
 
     expect(tight).not.toContain("Files");
-    expect(tight).not.toContain("Changeset summary");
+    expect(tight).toContain("Changeset summary");
     expect(tight).not.toMatch(/▌.*▌/);
   });
 
@@ -180,11 +180,11 @@ describe("responsive app", () => {
     const forcedStack = await captureFrameForBootstrap(createBootstrap("stack"), 240);
 
     expect(forcedSplit).not.toContain("Files");
-    expect(forcedSplit).not.toContain("Changeset summary");
+    expect(forcedSplit).toContain("Changeset summary");
     expect(forcedSplit).toMatch(/▌.*▌/);
 
     expect((forcedStack.match(/alpha\.ts/g) ?? []).length).toBe(2);
-    expect(forcedStack).not.toContain("Changeset summary");
+    expect(forcedStack).toContain("Changeset summary");
     expect(forcedStack).not.toMatch(/▌.*▌/);
   });
 

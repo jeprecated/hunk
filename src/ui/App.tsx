@@ -985,6 +985,7 @@ export function App({
         ) : null}
 
         <DiffPane
+          agentSummary={bootstrap.changeset.agentSummary}
           cancelCopySelectionRef={cancelCopySelectionRef}
           codeHorizontalOffset={codeHorizontalOffset}
           copyDecorations={copyDecorations}
@@ -994,6 +995,7 @@ export function App({
           pagerMode={pagerMode}
           screenLeft={diffPaneScreenLeft}
           screenTop={diffPaneScreenTop}
+          reviewAttention={bootstrap.changeset.reviewAttention}
           headerLabelWidth={diffHeaderLabelWidth}
           headerStatsWidth={diffHeaderStatsWidth}
           layout={resolvedLayout}

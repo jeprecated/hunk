@@ -5,6 +5,7 @@ import { normalizeBuiltInThemeId } from "../ui/themes";
 import { resolveGlobalConfigPath } from "./paths";
 import { detectVcs, findVcsRepoRootCandidate, getDefaultVcsAdapter, isVcsId } from "./vcs";
 import type {
+  ChangeContextKey,
   CliInput,
   CommonOptions,
   CustomSyntaxColorsConfig,
@@ -86,6 +87,10 @@ interface HunkConfigResolution {
   repoConfigPath?: string;
 }
 
+interface ChangeContextConfigResolutionOptions extends ConfigResolutionOptions {
+  commandKind?: "diff" | "show";
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -108,6 +113,19 @@ function normalizeBoolean(value: unknown) {
 /** Accept only plain strings from config files. */
 function normalizeString(value: unknown) {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/** Accept only supported Change Context discovery keys and reject typos. */
+function normalizeChangeContextKey(value: unknown): ChangeContextKey | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === "none" || value === "jj-change-id") {
+    return value;
+  }
+
+  throw new Error('Expected change_context_key to be either "none" or "jj-change-id".');
 }
 
 /** Accept only #rrggbb theme colors and report the failing TOML key path. */
@@ -237,6 +255,8 @@ function readConfigPreferences(source: Record<string, unknown>): CommonOptions {
     wrapLines: normalizeBoolean(source.wrap_lines),
     hunkHeaders: normalizeBoolean(source.hunk_headers),
     agentNotes: normalizeBoolean(source.agent_notes),
+    changeContextDir: normalizeString(source.change_context_dir),
+    changeContextKey: normalizeChangeContextKey(source.change_context_key),
     copyDecorations: normalizeBoolean(source.copy_decorations),
     transparentBackground:
       normalizeBoolean(source.transparentBackground) ??
@@ -253,6 +273,8 @@ function mergeOptions(base: CommonOptions, overrides: CommonOptions): CommonOpti
     vcs: overrides.vcs ?? base.vcs,
     theme: overrides.theme ?? base.theme,
     agentContext: overrides.agentContext ?? base.agentContext,
+    changeContextDir: overrides.changeContextDir ?? base.changeContextDir,
+    changeContextKey: overrides.changeContextKey ?? base.changeContextKey,
     pager: overrides.pager ?? base.pager,
     watch: overrides.watch ?? base.watch,
     excludeUntracked: overrides.excludeUntracked ?? base.excludeUntracked,
@@ -267,20 +289,34 @@ function mergeOptions(base: CommonOptions, overrides: CommonOptions): CommonOpti
 }
 
 /** Apply one parsed config object, including command/pager sections, to the current invocation. */
-function resolveConfigLayer(source: Record<string, unknown>, input: CliInput): CommonOptions {
+function resolveConfigLayerForCommand(
+  source: Record<string, unknown>,
+  commandKind?: string,
+  pager = false,
+): CommonOptions {
   let resolved = readConfigPreferences(source);
 
-  const commandSection = source[input.kind];
-  if (isRecord(commandSection)) {
-    resolved = mergeOptions(resolved, readConfigPreferences(commandSection));
+  if (commandKind) {
+    const commandSection = source[commandKind];
+    if (isRecord(commandSection)) {
+      resolved = mergeOptions(resolved, readConfigPreferences(commandSection));
+    }
   }
 
   const pagerSection = source.pager;
-  if (input.options.pager && isRecord(pagerSection)) {
+  if (pager && isRecord(pagerSection)) {
     resolved = mergeOptions(resolved, readConfigPreferences(pagerSection));
   }
 
   return resolved;
+}
+
+function configCommandKind(input: CliInput) {
+  return input.kind === "vcs" ? "diff" : input.kind;
+}
+
+function resolveConfigLayer(source: Record<string, unknown>, input: CliInput): CommonOptions {
+  return resolveConfigLayerForCommand(source, configCommandKind(input), input.options.pager);
 }
 
 /** Choose the VCS backend that best matches the discovered checkout. */
@@ -319,6 +355,8 @@ export function resolveConfiguredCliInput(
     // renderer theme-mode detection for their initial palette.
     theme: "github-dark-default",
     agentContext: input.options.agentContext,
+    changeContextDir: input.options.changeContextDir,
+    changeContextKey: input.options.changeContextKey ?? "none",
     pager: input.options.pager ?? false,
     watch: input.options.watch ?? false,
     excludeUntracked: false,
@@ -346,6 +384,8 @@ export function resolveConfiguredCliInput(
   resolvedOptions = {
     ...resolvedOptions,
     agentContext: input.options.agentContext,
+    changeContextDir: input.options.changeContextDir ?? resolvedOptions.changeContextDir,
+    changeContextKey: input.options.changeContextKey ?? resolvedOptions.changeContextKey ?? "none",
     pager: input.options.pager ?? false,
     watch: input.options.watch ?? resolvedOptions.watch ?? false,
     excludeUntracked: resolvedOptions.excludeUntracked ?? false,
@@ -371,6 +411,46 @@ export function resolveConfiguredCliInput(
       options: resolvedOptions,
     },
     customTheme: resolvedCustomTheme,
+    globalConfigPath: userConfigPath,
+    repoConfigPath,
+  };
+}
+
+/** Resolve only the options needed by `hunk change-context path`. */
+export function resolveConfiguredChangeContextOptions({
+  cwd = process.cwd(),
+  env = process.env,
+  commandKind,
+}: ChangeContextConfigResolutionOptions = {}) {
+  const repoRoot = findVcsRepoRootCandidate(cwd);
+  const repoConfigPath = repoRoot ? join(repoRoot, ".hunk", "config.toml") : undefined;
+  const userConfigPath = resolveGlobalConfigPath(env);
+
+  let resolvedOptions: CommonOptions = {
+    vcs: detectRepoVcsMode(cwd),
+    changeContextKey: "none",
+  };
+
+  if (userConfigPath) {
+    resolvedOptions = mergeOptions(
+      resolvedOptions,
+      resolveConfigLayerForCommand(readTomlRecord(userConfigPath), commandKind),
+    );
+  }
+
+  if (repoConfigPath) {
+    resolvedOptions = mergeOptions(
+      resolvedOptions,
+      resolveConfigLayerForCommand(readTomlRecord(repoConfigPath), commandKind),
+    );
+  }
+
+  return {
+    options: {
+      ...resolvedOptions,
+      vcs: resolvedOptions.vcs ?? "git",
+      changeContextKey: resolvedOptions.changeContextKey ?? "none",
+    },
     globalConfigPath: userConfigPath,
     repoConfigPath,
   };

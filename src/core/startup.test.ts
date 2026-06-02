@@ -1,7 +1,78 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DEFAULT_CHANGE_CONTEXT_DIR } from "./changeContextResolution";
 import { HunkUserError } from "./errors";
 import { prepareStartupPlan } from "./startup";
 import type { AppBootstrap, CliInput, ParsedCliInput } from "./types";
+
+const tempDirs: string[] = [];
+
+function cleanupTempDirs() {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (dir) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+}
+
+function createTempDir(prefix: string) {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+  tempDirs.push(dir);
+  return dir;
+}
+
+function jj(cwd: string, ...cmd: string[]) {
+  const proc = Bun.spawnSync(
+    [
+      "jj",
+      "--config",
+      "signing.behavior=drop",
+      "--config",
+      'user.name="Test User"',
+      "--config",
+      "user.email=test@example.com",
+      ...cmd,
+    ],
+    {
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    },
+  );
+
+  if (proc.exitCode !== 0) {
+    const stderr = Buffer.from(proc.stderr).toString("utf8");
+    throw new Error(stderr.trim() || `jj ${cmd.join(" ")} failed`);
+  }
+
+  return Buffer.from(proc.stdout).toString("utf8");
+}
+
+function createTempJjRepo(prefix: string) {
+  const dir = createTempDir(prefix);
+  jj(tmpdir(), "git", "init", "--colocate", dir);
+  writeFileSync(join(dir, "example.ts"), "export const value = 1;\n");
+  return dir;
+}
+
+function currentChangeId(repo: string) {
+  return jj(repo, "log", "--no-graph", "-r", "@", "-T", 'change_id ++ "\\n"').trim();
+}
+
+async function withCwd<T>(cwd: string, callback: () => T | Promise<T>) {
+  const previousCwd = process.cwd();
+  process.chdir(cwd);
+
+  try {
+    return await callback();
+  } finally {
+    process.chdir(previousCwd);
+  }
+}
 
 function createBootstrap(input: CliInput): AppBootstrap {
   return {
@@ -15,6 +86,13 @@ function createBootstrap(input: CliInput): AppBootstrap {
     initialMode: input.options.mode ?? "auto",
   };
 }
+
+afterEach(() => {
+  cleanupTempDirs();
+});
+
+// Keep jj-backed helper coverage opt-in on machines with the external CLI installed.
+const jjTest = Bun.which("jj") ? test : test.skip;
 
 describe("startup planning", () => {
   test("returns help output without entering app startup", async () => {
@@ -67,6 +145,143 @@ describe("startup planning", () => {
       input: { kind: "session", action: "list", output: "text" },
     });
     expect(loaded).toBe(false);
+  });
+
+  jjTest("prints a Change Context File path for helper command text output", async () => {
+    const repo = createTempJjRepo("hunk-startup-change-context-text-");
+    const home = createTempDir("hunk-startup-home-");
+    const changeId = currentChangeId(repo);
+
+    const plan = await withCwd(repo, () =>
+      prepareStartupPlan(["bun", "hunk", "change-context", "path", "@"], {
+        env: { HOME: home },
+      }),
+    );
+
+    expect(plan).toMatchObject({
+      kind: "change-context-command",
+      input: {
+        kind: "change-context-path",
+        rev: "@",
+        output: "text",
+      },
+      text: `${join(repo, DEFAULT_CHANGE_CONTEXT_DIR, `${changeId}.json`)}\n`,
+    });
+  });
+
+  jjTest("returns structured Change Context helper status and applies --for config", async () => {
+    const repo = createTempJjRepo("hunk-startup-change-context-json-");
+    const home = createTempDir("hunk-startup-home-");
+    const changeId = currentChangeId(repo);
+    mkdirSync(join(repo, ".hunk"), { recursive: true });
+    writeFileSync(
+      join(repo, ".hunk", "config.toml"),
+      [
+        'change_context_key = "none"',
+        "",
+        "[diff]",
+        'change_context_key = "jj-change-id"',
+        'change_context_dir = ".hunk/diff-context"',
+      ].join("\n"),
+    );
+
+    const plan = await withCwd(repo, () =>
+      prepareStartupPlan(
+        ["bun", "hunk", "change-context", "path", "@", "--for", "diff", "--json"],
+        {
+          env: { HOME: home },
+        },
+      ),
+    );
+
+    expect(plan.kind).toBe("change-context-command");
+    if (plan.kind !== "change-context-command") {
+      throw new Error("Expected a Change Context helper plan.");
+    }
+
+    expect(JSON.parse(plan.text)).toEqual({
+      enabled: true,
+      vcs: "jj",
+      key: "jj-change-id",
+      changeId,
+      path: join(repo, ".hunk", "diff-context", `${changeId}.json`),
+      exists: false,
+    });
+  });
+
+  jjTest(
+    "returns unresolved Change Context helper JSON status for multi-change revsets",
+    async () => {
+      const repo = createTempJjRepo("hunk-startup-change-context-unresolved-");
+      const home = createTempDir("hunk-startup-home-");
+      jj(repo, "commit", "-m", "first");
+      writeFileSync(join(repo, "second.ts"), "export const second = true;\n");
+      mkdirSync(join(repo, ".hunk"), { recursive: true });
+      writeFileSync(join(repo, ".hunk", "config.toml"), 'change_context_key = "jj-change-id"\n');
+
+      const plan = await withCwd(repo, () =>
+        prepareStartupPlan(["bun", "hunk", "change-context", "path", "all()", "--json"], {
+          env: { HOME: home },
+        }),
+      );
+
+      expect(plan.kind).toBe("change-context-command");
+      if (plan.kind !== "change-context-command") {
+        throw new Error("Expected a Change Context helper plan.");
+      }
+
+      expect(JSON.parse(plan.text)).toEqual({
+        enabled: true,
+        vcs: "jj",
+        key: "jj-change-id",
+        reason: "Revset did not resolve to exactly one Jujutsu change.",
+      });
+    },
+  );
+
+  jjTest("returns nonzero Change Context validation plans when JSON validation fails", async () => {
+    const repo = createTempJjRepo("hunk-startup-change-context-validate-");
+    const home = createTempDir("hunk-startup-home-");
+
+    const plan = await withCwd(repo, () =>
+      prepareStartupPlan(
+        ["bun", "hunk", "change-context", "validate", "@", "--for", "diff", "--strict", "--json"],
+        {
+          env: { HOME: home },
+        },
+      ),
+    );
+
+    expect(plan.kind).toBe("change-context-command");
+    if (plan.kind !== "change-context-command") {
+      throw new Error("Expected a Change Context helper plan.");
+    }
+
+    expect(plan.exitCode).toBe(1);
+    expect(JSON.parse(plan.text)).toMatchObject({
+      ok: false,
+      issues: [{ code: "missing-context-file" }],
+    });
+  });
+
+  jjTest("returns concise nonzero Change Context validation plans for plain output", async () => {
+    const repo = createTempJjRepo("hunk-startup-change-context-validate-text-");
+    const home = createTempDir("hunk-startup-home-");
+
+    const plan = await withCwd(repo, () =>
+      prepareStartupPlan(["bun", "hunk", "change-context", "validate", "@", "--for", "diff"], {
+        env: { HOME: home },
+      }),
+    );
+
+    expect(plan.kind).toBe("change-context-command");
+    if (plan.kind !== "change-context-command") {
+      throw new Error("Expected a Change Context helper plan.");
+    }
+
+    expect(plan.exitCode).toBe(1);
+    expect(plan.text).toContain("Change Context validation failed:");
+    expect(plan.text).toContain("- Referenced Change Context File does not exist.");
   });
 
   test("routes non-diff pager stdin to the plain-text pager path", async () => {

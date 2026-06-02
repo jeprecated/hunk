@@ -16,7 +16,7 @@ import type { AppBootstrap, CliInput, CommonOptions } from "../core/types";
  * | `hunk patch patchfile` inside a repo | The repo root | Anything outside that repo root. |
  * | `hunk patch patchfile` outside a repo | None | All session reloads. |
  * | stdin-backed patch startup | None | All session reloads. |
- * | Any session with `--agent-context path` | Same roots as the session | Agent context sidecars outside those roots, symlink escapes, and `--agent-context -`. |
+ * | Any session with `--change-context path` / `--agent-context path` | Same roots as the session | Change context files outside those roots, symlink escapes, and stdin context. |
  *
  * All candidate paths are realpath-normalized through existing ancestors so symlinks cannot escape
  * the roots, including paths whose final file does not exist yet.
@@ -178,10 +178,10 @@ function validateCommonReloadOptions(
   }
 
   if (options.agentContext === "-") {
-    throw new Error("Session reload does not support `--agent-context -`.");
+    throw new Error("Session reload does not support `--change-context -` / `--agent-context -`.");
   }
 
-  assertReloadFileWithinBounds(bounds, cwd, options.agentContext, "agent context path");
+  assertReloadFileWithinBounds(bounds, cwd, options.agentContext, "change context path");
 }
 
 /**

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { resolveChangeContextPath } from "./changeContextResolution";
 import { createVcsWatchSignature, getConfiguredVcsAdapter, operationFromInput } from "./vcs";
 import type { CliInput } from "./types";
 
@@ -49,8 +50,9 @@ export function computeWatchSignature(input: CliInput) {
       break;
   }
 
-  if (input.options.agentContext && input.options.agentContext !== "-") {
-    parts.push(`agent:${statSignature(input.options.agentContext)}`);
+  const changeContextPath = resolveChangeContextPath(input, { requireExisting: false });
+  if (changeContextPath?.path && changeContextPath.path !== "-") {
+    parts.push(`change-context:${statSignature(changeContextPath.path)}`);
   }
 
   return parts.join("\n---\n");

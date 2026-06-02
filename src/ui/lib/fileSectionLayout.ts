@@ -31,9 +31,10 @@ export function buildFileSectionLayouts(
   files: DiffFile[],
   bodyHeights: number[],
   headerHeights?: number[],
+  startOffset = 0,
 ) {
   const layouts: FileSectionLayout[] = [];
-  let cursor = 0;
+  let cursor = Math.max(0, startOffset);
 
   files.forEach((file, index) => {
     const separatorHeight = index > 0 ? 1 : 0;

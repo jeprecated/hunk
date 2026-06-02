@@ -95,7 +95,7 @@ describe("parseCli", () => {
       "split",
       "--theme",
       "github-light-default",
-      "--agent-context",
+      "--change-context",
       "notes.json",
       "--no-line-numbers",
       "--wrap",
@@ -138,6 +138,62 @@ describe("parseCli", () => {
       options: {
         transparentBackground: false,
       },
+    });
+  });
+
+  test("parses legacy agent context alias", async () => {
+    const parsed = await parseCli(["bun", "hunk", "diff", "--agent-context", "legacy.json"]);
+
+    expect(parsed).toMatchObject({
+      kind: "vcs",
+      options: { agentContext: "legacy.json" },
+    });
+  });
+
+  test("rejects conflicting explicit context aliases", async () => {
+    await expect(
+      parseCli([
+        "bun",
+        "hunk",
+        "diff",
+        "--change-context",
+        "change.json",
+        "--agent-context",
+        "agent.json",
+      ]),
+    ).rejects.toThrow("Specify either --change-context or --agent-context, not both.");
+  });
+
+  test("parses change context path helper", async () => {
+    await expect(
+      parseCli(["bun", "hunk", "change-context", "path", "@-", "--for", "show", "--json"]),
+    ).resolves.toEqual({
+      kind: "change-context-path",
+      rev: "@-",
+      commandKind: "show",
+      output: "json",
+    });
+  });
+
+  test("parses change context validate helper", async () => {
+    await expect(
+      parseCli([
+        "bun",
+        "hunk",
+        "change-context",
+        "validate",
+        "@",
+        "--for",
+        "diff",
+        "--strict",
+        "--json",
+      ]),
+    ).resolves.toEqual({
+      kind: "change-context-validate",
+      rev: "@",
+      commandKind: "diff",
+      strict: true,
+      output: "json",
     });
   });
 

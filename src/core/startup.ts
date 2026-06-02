@@ -1,4 +1,9 @@
-import { resolveConfiguredCliInput } from "./config";
+import { resolveConfiguredChangeContextOptions, resolveConfiguredCliInput } from "./config";
+import { resolveChangeContextPathStatus } from "./changeContextResolution";
+import {
+  renderChangeContextValidationText,
+  validateChangeContextCommand,
+} from "./changeContextValidation";
 import { HunkUserError } from "./errors";
 import { loadAppBootstrap } from "./loaders";
 import { looksLikePatchInput } from "./pager";
@@ -9,7 +14,13 @@ import {
   usesPipedPatchInput,
   type ControllingTerminal,
 } from "./terminal";
-import type { AppBootstrap, CliInput, ParsedCliInput, SessionCommandInput } from "./types";
+import type {
+  AppBootstrap,
+  ChangeContextCommandInput,
+  CliInput,
+  ParsedCliInput,
+  SessionCommandInput,
+} from "./types";
 import { canReloadInput } from "./watch";
 import { parseCli } from "./cli";
 
@@ -24,6 +35,12 @@ export type StartupPlan =
   | {
       kind: "session-command";
       input: SessionCommandInput;
+    }
+  | {
+      kind: "change-context-command";
+      input: ChangeContextCommandInput;
+      text: string;
+      exitCode: number;
     }
   | {
       kind: "plain-text-pager";
@@ -45,6 +62,34 @@ export type StartupPlan =
       cliInput: CliInput;
       controllingTerminal: ControllingTerminal | null;
     };
+
+function renderChangeContextPathCommand(
+  input: Extract<ChangeContextCommandInput, { kind: "change-context-path" }>,
+  { cwd = process.cwd(), env = process.env }: { cwd?: string; env?: NodeJS.ProcessEnv } = {},
+) {
+  const configured = resolveConfiguredChangeContextOptions({
+    cwd,
+    env,
+    commandKind: input.commandKind,
+  });
+  const status = resolveChangeContextPathStatus({
+    rev: input.rev,
+    options: configured.options,
+    cwd,
+  });
+
+  if (input.output === "json") {
+    return `${JSON.stringify(status)}\n`;
+  }
+
+  if (!status.path) {
+    throw new HunkUserError("Could not resolve a Change Context File path.", [
+      status.reason ?? "Run this command inside a Jujutsu repository with a single-change revset.",
+    ]);
+  }
+
+  return `${status.path}\n`;
+}
 
 function isCapturedPagerHost(env: NodeJS.ProcessEnv) {
   return (
@@ -112,6 +157,28 @@ export async function prepareStartupPlan(
     return {
       kind: "session-command",
       input: parsedCliInput,
+    };
+  }
+
+  if (parsedCliInput.kind === "change-context-path") {
+    return {
+      kind: "change-context-command",
+      input: parsedCliInput,
+      text: renderChangeContextPathCommand(parsedCliInput, { env }),
+      exitCode: 0,
+    };
+  }
+
+  if (parsedCliInput.kind === "change-context-validate") {
+    const result = await validateChangeContextCommand(parsedCliInput, { env });
+    return {
+      kind: "change-context-command",
+      input: parsedCliInput,
+      text:
+        parsedCliInput.output === "json"
+          ? `${JSON.stringify(result)}\n`
+          : renderChangeContextValidationText(result),
+      exitCode: result.ok ? 0 : 1,
     };
   }
 
@@ -218,7 +285,7 @@ export async function prepareStartupPlan(
     throw new HunkUserError(
       "`--watch` requires a file- or Git-backed input that Hunk can reopen.",
       [
-        "Use a patch file path instead of stdin, and avoid `--agent-context -` for watched sessions.",
+        "Use a patch file path instead of stdin, and avoid `--change-context -` / `--agent-context -` for watched sessions.",
       ],
     );
   }

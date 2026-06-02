@@ -1,13 +1,15 @@
 ---
 name: hunk-review
-description: Interacts with live Hunk diff review sessions via CLI. Inspects review focus, navigates files and hunks, reloads session contents, and adds inline review comments. Use when the user has a Hunk session running or wants to review diffs interactively.
+description: Interacts with live Hunk diff review sessions via CLI and writes Hunk Change Context Files. Use when the user has a Hunk session running, wants to review diffs interactively, or asks to annotate changes with Hunk / write hunk annotations.
 ---
 
 # Hunk Review
 
 Hunk is an interactive terminal diff viewer. The TUI is for the user -- do NOT run `hunk diff`, `hunk show`, or other interactive commands directly. Use `hunk session *` CLI commands to inspect and control live sessions through the local daemon.
 
-If no session exists, ask the user to launch Hunk in their terminal first.
+If the user asks to "annotate with Hunk", "annotate your changes with hunk", or asks where the Hunk annotation file is, they usually mean a durable Change Context File under `.hunk/change-context/`, not a prose summary in chat. Write the JSON file, validate it, and report the path.
+
+If no session exists and the user wants live-session interaction, ask the user to launch Hunk in their terminal first.
 
 ## Workflow
 
@@ -111,6 +113,66 @@ hunk session comment clear --repo . --yes [--file README.md]
 - Pass `--focus` when you want to jump to the new note or the first note in a batch
 - `comment list` and `comment clear` accept optional `--file`
 - Quote `--summary` and `--rationale` defensively in the shell
+
+## Change Context Files
+
+When the user explicitly asks for durable agent context, asks to annotate a change with Hunk, or when Hunk config enables `change_context_key = "jj-change-id"`, write an ignored local Change Context File for the jj change you are working on. Do not satisfy these requests by printing an annotated summary in chat only.
+
+For jj-backed reviews, prefer Change Context Files and the `hunk change-context ...` helpers for durable agent-authored review context. Treat legacy `--agent-context` files as explicit user-provided sidecars, not the default jj workflow.
+
+Resolve the target path with Hunk instead of duplicating config rules:
+
+```bash
+hunk change-context path --for diff --json
+hunk change-context path @- --for show --json
+```
+
+Use the returned `path` and `changeId`. If `enabled` is false, write only when the user explicitly requested durable context. Create the parent directory as needed.
+
+The file is agent-owned. You may rewrite the whole file with your current best narrative; there are no expected manual edits to preserve. You may update it while working, but do a final concise pass when the change is complete.
+
+After writing or updating a Change Context File, validate it before reporting completion:
+
+```bash
+hunk change-context validate @ --for diff --strict --json
+```
+
+If validation fails, repair the file and rerun the command until the JSON result has `ok: true`. Include the validation result in your final response whenever you authored or modified a Change Context File.
+
+Write JSON shaped like:
+
+```json
+{
+  "version": 1,
+  "summary": "Short narrative summary of the change.",
+  "change": { "vcs": "jj", "key": "jj-change-id", "id": "<full-change-id>" },
+  "reviewAttention": {
+    "level": "medium",
+    "summary": "Why a human should review this carefully",
+    "rationale": "Optional longer explanation."
+  },
+  "files": [
+    {
+      "path": "src/example.ts",
+      "summary": "What changed in this file.",
+      "annotations": [
+        {
+          "newRange": [12, 18],
+          "summary": "Explain the important hunk.",
+          "rationale": "Why this implementation was chosen.",
+          "confidence": "high",
+          "source": "agent",
+          "author": "pi"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Review Attention is advisory: use `low` for docs/tests/mechanical safe changes, `medium` for normal behavior changes or refactors, and `high` for new features or security, data-loss, concurrency, public-API, or migration risk. Always include a concise `summary` for the chosen level.
+
+Keep context files review-oriented: one changeset summary, narrative file order, and only annotations with real rationale. Do not comment on every hunk.
 
 ## New files in working-tree reviews
 

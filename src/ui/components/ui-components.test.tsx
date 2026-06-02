@@ -3151,6 +3151,32 @@ describe("UI components", () => {
     expect(frame).toContain("@@ -1,1 +1,2 @@");
     expect(frame).toContain("@@ -1,1 +1,1 @@");
     expect(frame).not.toContain("[AI]");
-    expect(frame).not.toContain("Changeset summary");
+    expect(frame).toContain("Changeset summary");
+  });
+
+  test("App renders Change Context summary and Review Attention above the file stream", async () => {
+    const bootstrap = createTestVcsAppBootstrap({
+      agentSummary: "Change context summary",
+      changesetId: "changeset:attention",
+      files: [
+        createTestDiffFile(
+          "alpha",
+          "alpha.ts",
+          "export const alpha = 1;\n",
+          "export const alpha = 2;\n",
+        ),
+      ],
+      reviewAttention: {
+        level: "high",
+        summary: "New review path",
+        rationale: "Touches review startup and rendering.",
+      },
+    });
+    const frame = await captureFrame(<AppHost bootstrap={bootstrap} />, 220, 18);
+
+    expect(frame).toContain("Change context summary");
+    expect(frame).toContain("Review attention: high — New review path");
+    expect(frame).toContain("Touches review startup and rendering.");
+    expect(frame).toContain("alpha.ts");
   });
 });
