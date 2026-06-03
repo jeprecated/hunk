@@ -381,6 +381,7 @@ export function PierreDiffView({
               copySelectedSide={copySelectedSide}
               anchorId={plannedRow.anchorId}
               noteGuideSide={plannedRow.noteGuideSide}
+              noteRangeSide={plannedRow.noteRangeSide}
               showAddNoteBadge={
                 startUserNoteAtHunkHandler !== undefined &&
                 hoveredRowKey === plannedRow.row.key &&

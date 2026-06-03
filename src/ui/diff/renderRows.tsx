@@ -12,6 +12,7 @@ import {
   diffRailMarker,
   dimRailColor,
   neutralRailColor,
+  noteRangeHighlightBg,
   selectionHighlightBg,
   splitCellPalette,
   splitGutterText,
@@ -603,12 +604,12 @@ export function renderDecoratedPlannedRowText(
   }
 
   if (preparedRow.type === "split-line") {
-    const guideOnOldSide = row.noteGuideSide === "old";
-    const guideOnNewSide = row.noteGuideSide === "new";
-    const leftPrefix = guideOnOldSide ? "│" : marker();
+    const rangeLineOnOldSide = row.noteGuideSide === "old" || row.noteRangeSide === "old";
+    const rangeLineOnNewSide = row.noteGuideSide === "new" || row.noteRangeSide === "new";
+    const leftPrefix = rangeLineOnOldSide ? "│" : marker();
     const rightPrefix = "▌";
     const { leftWidth, rightWidth } = resolveSplitPaneWidths(width);
-    const rightRenderWidth = Math.max(0, rightWidth - (guideOnNewSide ? 1 : 0));
+    const rightRenderWidth = Math.max(0, rightWidth - (rangeLineOnNewSide ? 1 : 0));
 
     const leftCell = buildPlainSplitCellLines(
       preparedRow.left,
@@ -663,10 +664,10 @@ export function renderDecoratedPlannedRowText(
         return normalizedLeft;
       }
       if (side === "right") {
-        return `${normalizedRight}${guideOnNewSide ? "│" : ""}`;
+        return `${normalizedRight}${rangeLineOnNewSide ? "│" : ""}`;
       }
 
-      return `${normalizedLeft}${normalizedRight}${guideOnNewSide ? "│" : ""}`;
+      return `${normalizedLeft}${normalizedRight}${rangeLineOnNewSide ? "│" : ""}`;
     });
   }
 
@@ -674,10 +675,10 @@ export function renderDecoratedPlannedRowText(
     return [];
   }
 
-  const guideOnOldSide = row.noteGuideSide === "old";
-  const guideOnNewSide = row.noteGuideSide === "new";
-  const contentWidth = Math.max(0, width - (guideOnNewSide ? 1 : 0));
-  const prefix = guideOnOldSide ? "│" : marker();
+  const rangeLineOnOldSide = row.noteGuideSide === "old" || row.noteRangeSide === "old";
+  const rangeLineOnNewSide = row.noteGuideSide === "new" || row.noteRangeSide === "new";
+  const contentWidth = Math.max(0, width - (rangeLineOnNewSide ? 1 : 0));
+  const prefix = rangeLineOnOldSide ? "│" : marker();
   const cellLines = buildPlainStackCellLines(
     preparedRow.cell,
     contentWidth,
@@ -692,7 +693,7 @@ export function renderDecoratedPlannedRowText(
   return cellLines.map((line) => {
     const visibleLine = `${prefix}${line.spansText}`;
     const normalized = padTextByWidth(visibleLine, Math.max(1, contentWidth + prefix.length));
-    return `${normalized}${guideOnNewSide ? "│" : ""}`;
+    return `${normalized}${rangeLineOnNewSide ? "│" : ""}`;
   });
 }
 
@@ -841,11 +842,31 @@ function applySelectionPalette<P extends { gutterBg: string; contentBg: string }
   };
 }
 
+/** Apply the annotation-range blend to a cell palette. */
+function applyNoteRangePalette<P extends { gutterBg: string; contentBg: string }>(
+  palette: P,
+  theme: AppTheme,
+): P {
+  return {
+    ...palette,
+    gutterBg: noteRangeHighlightBg(palette.gutterBg, theme),
+    contentBg: noteRangeHighlightBg(palette.contentBg, theme),
+  };
+}
+
 /** Apply the selection-highlight blend to a prefix descriptor. */
 function applySelectionPrefix<P extends { bg: string }>(prefix: P, theme: AppTheme): P {
   return {
     ...prefix,
     bg: selectionHighlightBg(prefix.bg, theme),
+  };
+}
+
+/** Apply the annotation-range blend to a prefix descriptor. */
+function applyNoteRangePrefix<P extends { bg: string }>(prefix: P, theme: AppTheme): P {
+  return {
+    ...prefix,
+    bg: noteRangeHighlightBg(prefix.bg, theme),
   };
 }
 
@@ -866,10 +887,16 @@ function renderSplitCell(
   selected = false,
   selectionColRange?: CopySelectedRowRange,
   paneOffset = 0,
+  noteRangeHighlighted = false,
 ) {
   const basePalette = splitCellPalette(cell.kind, theme, cell.moveKind);
-  const palette = selected ? applySelectionPalette(basePalette, theme) : basePalette;
-  const resolvedPrefix = selected && prefix ? applySelectionPrefix(prefix, theme) : prefix;
+  const notePalette = noteRangeHighlighted
+    ? applyNoteRangePalette(basePalette, theme)
+    : basePalette;
+  const palette = selected ? applySelectionPalette(notePalette, theme) : notePalette;
+  const notePrefix = noteRangeHighlighted && prefix ? applyNoteRangePrefix(prefix, theme) : prefix;
+  const resolvedPrefix =
+    selected && notePrefix ? applySelectionPrefix(notePrefix, theme) : notePrefix;
   const prefixWidth = resolvedPrefix?.text.length ?? 0;
   const { gutterWidth, contentWidth } = resolveSplitCellGeometry(
     width,
@@ -932,10 +959,16 @@ function renderStackCell(
   },
   selected = false,
   selectionColRange?: CopySelectedRowRange,
+  noteRangeHighlighted = false,
 ) {
   const basePalette = stackCellPalette(cell.kind, theme, cell.moveKind);
-  const palette = selected ? applySelectionPalette(basePalette, theme) : basePalette;
-  const resolvedPrefix = selected && prefix ? applySelectionPrefix(prefix, theme) : prefix;
+  const notePalette = noteRangeHighlighted
+    ? applyNoteRangePalette(basePalette, theme)
+    : basePalette;
+  const palette = selected ? applySelectionPalette(notePalette, theme) : notePalette;
+  const notePrefix = noteRangeHighlighted && prefix ? applyNoteRangePrefix(prefix, theme) : prefix;
+  const resolvedPrefix =
+    selected && notePrefix ? applySelectionPrefix(notePrefix, theme) : notePrefix;
   const prefixWidth = resolvedPrefix?.text.length ?? 0;
   const { gutterWidth, contentWidth } = resolveStackCellGeometry(
     width,
@@ -996,9 +1029,12 @@ function renderWrappedSplitCellLine(
   selected = false,
   selectionColRange?: CopySelectedRowRange,
   paneOffset = 0,
+  noteRangeHighlighted = false,
 ) {
-  const resolvedPalette = selected ? applySelectionPalette(palette, theme) : palette;
-  const resolvedPrefix = selected ? applySelectionPrefix(prefix, theme) : prefix;
+  const notePalette = noteRangeHighlighted ? applyNoteRangePalette(palette, theme) : palette;
+  const resolvedPalette = selected ? applySelectionPalette(notePalette, theme) : notePalette;
+  const notePrefix = noteRangeHighlighted ? applyNoteRangePrefix(prefix, theme) : prefix;
+  const resolvedPrefix = selected ? applySelectionPrefix(notePrefix, theme) : notePrefix;
 
   const prefixWidth = prefix.text.length;
   const gutterWidth = line.gutterText.length;
@@ -1054,9 +1090,12 @@ function renderWrappedStackCellLine(
   },
   selected = false,
   selectionColRange?: CopySelectedRowRange,
+  noteRangeHighlighted = false,
 ) {
-  const resolvedPalette = selected ? applySelectionPalette(palette, theme) : palette;
-  const resolvedPrefix = selected ? applySelectionPrefix(prefix, theme) : prefix;
+  const notePalette = noteRangeHighlighted ? applyNoteRangePalette(palette, theme) : palette;
+  const resolvedPalette = selected ? applySelectionPalette(notePalette, theme) : notePalette;
+  const notePrefix = noteRangeHighlighted ? applyNoteRangePrefix(prefix, theme) : prefix;
+  const resolvedPrefix = selected ? applySelectionPrefix(notePrefix, theme) : notePrefix;
 
   const prefixWidth = prefix.text.length;
   const gutterWidth = line.gutterText.length;
@@ -1359,6 +1398,7 @@ function renderRow(
   copySelectedSide: "left" | "right" | undefined,
   anchorId?: string,
   noteGuideSide?: "old" | "new",
+  noteRangeSide?: "old" | "new",
   showAddNoteBadge = false,
   onHoverRow?: (rowKey: string) => void,
   onStartUserNoteAtHunk?: (hunkIndex: number, target?: UserNoteLineTarget) => void,
@@ -1402,6 +1442,10 @@ function renderRow(
   } else if (row.type === "split-line") {
     const guideOnOldSide = noteGuideSide === "old";
     const guideOnNewSide = noteGuideSide === "new";
+    const highlightOldRange = noteRangeSide === "old";
+    const highlightNewRange = noteRangeSide === "new";
+    const rangeLineOnOldSide = guideOnOldSide || highlightOldRange;
+    const rangeLineOnNewSide = guideOnNewSide || highlightNewRange;
     const addNoteTarget: UserNoteLineTarget | undefined =
       row.right.lineNumber !== undefined
         ? { side: "new", line: row.right.lineNumber }
@@ -1413,10 +1457,10 @@ function renderRow(
     const addBadgeWidth =
       showAddNoteBadge || (wrapLines && reserveAddNoteColumn) ? addNoteBadgeText.length : 0;
     const { leftWidth, rightWidth } = resolveSplitPaneWidths(width);
-    const rightRenderWidth = Math.max(0, rightWidth - (guideOnNewSide ? 1 : 0) - addBadgeWidth);
+    const rightRenderWidth = Math.max(0, rightWidth - (rangeLineOnNewSide ? 1 : 0) - addBadgeWidth);
     const leftPrefix = {
-      text: guideOnOldSide ? "│" : marker(),
-      fg: guideOnOldSide
+      text: rangeLineOnOldSide ? "│" : marker(),
+      fg: rangeLineOnOldSide
         ? theme.noteBorder
         : splitLeftRailColor(row.left.kind, theme, selected || hasCopySelection),
       bg: theme.panel,
@@ -1453,6 +1497,7 @@ function renderRow(
                 hasLeftSelection,
                 hasLeftSelection ? copySelectedRowRange : undefined,
                 0,
+                highlightOldRange,
               )}
               {renderSplitCell(
                 row.right,
@@ -1466,8 +1511,9 @@ function renderRow(
                 hasRightSelection,
                 hasRightSelection ? copySelectedRowRange : undefined,
                 leftWidth,
+                highlightNewRange,
               )}
-              {guideOnNewSide ? (
+              {rangeLineOnNewSide ? (
                 <span key={`${row.key}:note-guide`} fg={theme.noteBorder}>
                   │
                 </span>
@@ -1549,6 +1595,7 @@ function renderRow(
                       hasLeftSelection,
                       hasLeftSelection ? copySelectedRowRange : undefined,
                       0,
+                      highlightOldRange,
                     )}
                     {renderWrappedSplitCellLine(
                       rightLine,
@@ -1560,8 +1607,9 @@ function renderRow(
                       hasRightSelection,
                       hasRightSelection ? copySelectedRowRange : undefined,
                       leftWidth,
+                      highlightNewRange,
                     )}
-                    {guideOnNewSide ? (
+                    {rangeLineOnNewSide ? (
                       <span key={`${row.key}:note-guide:${index}`} fg={theme.noteBorder}>
                         │
                       </span>
@@ -1590,6 +1638,9 @@ function renderRow(
   } else if (row.type === "stack-line") {
     const guideOnOldSide = noteGuideSide === "old";
     const guideOnNewSide = noteGuideSide === "new";
+    const highlightStackRange = noteRangeSide !== undefined;
+    const rangeLineOnOldSide = guideOnOldSide || noteRangeSide === "old";
+    const rangeLineOnNewSide = guideOnNewSide || noteRangeSide === "new";
     const addNoteTarget: UserNoteLineTarget | undefined =
       row.cell.newLineNumber !== undefined
         ? { side: "new", line: row.cell.newLineNumber }
@@ -1598,10 +1649,10 @@ function renderRow(
           : undefined;
     const addBadgeWidth =
       showAddNoteBadge || (wrapLines && reserveAddNoteColumn) ? addNoteBadgeText.length : 0;
-    const contentWidth = Math.max(0, width - (guideOnNewSide ? 1 : 0) - addBadgeWidth);
+    const contentWidth = Math.max(0, width - (rangeLineOnNewSide ? 1 : 0) - addBadgeWidth);
     const prefix = {
-      text: guideOnOldSide ? "│" : marker(),
-      fg: guideOnOldSide
+      text: rangeLineOnOldSide ? "│" : marker(),
+      fg: rangeLineOnOldSide
         ? theme.noteBorder
         : stackRailColor(row.cell.kind, theme, selected || hasCopySelection),
       bg: theme.panel,
@@ -1632,8 +1683,9 @@ function renderRow(
                 prefix,
                 hasCopySelection,
                 hasCopySelection ? copySelectedRowRange : undefined,
+                highlightStackRange,
               )}
-              {guideOnNewSide ? (
+              {rangeLineOnNewSide ? (
                 <span key={`${row.key}:note-guide`} fg={theme.noteBorder}>
                   │
                 </span>
@@ -1692,8 +1744,9 @@ function renderRow(
                       prefix,
                       hasCopySelection,
                       hasCopySelection ? copySelectedRowRange : undefined,
+                      highlightStackRange,
                     )}
-                    {guideOnNewSide ? (
+                    {rangeLineOnNewSide ? (
                       <span key={`${row.key}:note-guide:${index}`} fg={theme.noteBorder}>
                         │
                       </span>
@@ -1744,6 +1797,7 @@ interface DiffRowViewProps {
   copySelectedSide?: "left" | "right";
   anchorId?: string;
   noteGuideSide?: "old" | "new";
+  noteRangeSide?: "old" | "new";
   showAddNoteBadge?: boolean;
   onHoverRow?: (rowKey: string) => void;
   onStartUserNoteAtHunk?: (hunkIndex: number, target?: UserNoteLineTarget) => void;
@@ -1772,6 +1826,7 @@ export const DiffRowView = memo(
     copySelectedSide,
     anchorId,
     noteGuideSide,
+    noteRangeSide,
     showAddNoteBadge,
     onHoverRow,
     onStartUserNoteAtHunk,
@@ -1791,6 +1846,7 @@ export const DiffRowView = memo(
       copySelectedSide,
       anchorId,
       noteGuideSide,
+      noteRangeSide,
       showAddNoteBadge,
       onHoverRow,
       onStartUserNoteAtHunk,
@@ -1812,6 +1868,7 @@ export const DiffRowView = memo(
       previous.copySelectedSide === next.copySelectedSide &&
       previous.anchorId === next.anchorId &&
       previous.noteGuideSide === next.noteGuideSide &&
+      previous.noteRangeSide === next.noteRangeSide &&
       previous.showAddNoteBadge === next.showAddNoteBadge &&
       previous.onHoverRow === next.onHoverRow &&
       previous.onStartUserNoteAtHunk === next.onStartUserNoteAtHunk &&

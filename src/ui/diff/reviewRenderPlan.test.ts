@@ -68,6 +68,16 @@ function guidedSplitLineNumbers(plannedRows: PlannedReviewRow[], side: "old" | "
   });
 }
 
+function highlightedSplitLineNumbers(plannedRows: PlannedReviewRow[], side: "old" | "new") {
+  return plannedRows.flatMap((row) => {
+    if (row.kind !== "diff-row" || row.noteRangeSide !== side || row.row.type !== "split-line") {
+      return [];
+    }
+
+    return [side === "new" ? row.row.right.lineNumber : row.row.left.lineNumber];
+  });
+}
+
 describe("review render plan", () => {
   test("inserts an inline note before the anchor row and starts the guide after the anchor", () => {
     const theme = resolveTheme("github-dark-default", null);
@@ -113,6 +123,7 @@ describe("review render plan", () => {
     }
 
     expect(guidedSplitLineNumbers(plannedRows, "new")).toEqual([3]);
+    expect(highlightedSplitLineNumbers(plannedRows, "new")).toEqual([2, 3]);
   });
 
   test("anchors deletion-only notes to old-side rows without a dangling guide below the note", () => {

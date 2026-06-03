@@ -29,6 +29,7 @@ export type PlannedReviewRow =
       row: DiffRow;
       anchorId?: string;
       noteGuideSide?: "old" | "new";
+      noteRangeSide?: "old" | "new";
     }
   | {
       kind: "inline-note";
@@ -257,6 +258,27 @@ function buildNoteGuideSideByRowKey(placementsByAnchor: Map<string, InlineVisibl
   return guideSideByRowKey;
 }
 
+function buildNoteRangeSideByRowKey(placementsByAnchor: Map<string, InlineVisibleNotePlacement[]>) {
+  const rangeSideByRowKey = new Map<string, "old" | "new">();
+
+  for (const placements of placementsByAnchor.values()) {
+    for (const placement of placements) {
+      if (!placement.anchorSide) {
+        continue;
+      }
+
+      const rowKeys = [placement.anchorKey, ...placement.guidedRowKeys];
+      for (const rowKey of rowKeys) {
+        if (!rangeSideByRowKey.has(rowKey)) {
+          rangeSideByRowKey.set(rowKey, placement.anchorSide);
+        }
+      }
+    }
+  }
+
+  return rangeSideByRowKey;
+}
+
 function rowCanAnchorHunk(row: DiffRow, showHunkHeaders: boolean) {
   if (showHunkHeaders) {
     return row.type === "hunk-header";
@@ -292,6 +314,7 @@ export function buildReviewRenderPlan({
 }) {
   const placementsByAnchor = buildInlineVisibleNotePlacements(rows, visibleAgentNotes);
   const noteGuideSideByRowKey = buildNoteGuideSideByRowKey(placementsByAnchor);
+  const noteRangeSideByRowKey = buildNoteRangeSideByRowKey(placementsByAnchor);
   const plannedRows: PlannedReviewRow[] = [];
   const anchoredHunks = new Set<number>();
 
@@ -334,6 +357,7 @@ export function buildReviewRenderPlan({
       row,
       anchorId,
       noteGuideSide: noteGuideSideByRowKey.get(row.key),
+      noteRangeSide: noteRangeSideByRowKey.get(row.key),
     });
   }
 

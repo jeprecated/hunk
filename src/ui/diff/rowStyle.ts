@@ -3,6 +3,7 @@ import { blendHex } from "../lib/color";
 import type { SplitLineCell, StackLineCell } from "./pierre";
 
 const INACTIVE_RAIL_BLEND = 0.35;
+const NOTE_RANGE_BG_BLEND = 0.18;
 const SELECTION_BG_BLEND = 0.75;
 
 /** The diff rail marker is always visible in Hunk stack and split rows. */
@@ -19,6 +20,11 @@ export function diffRailMarker() {
  */
 export function selectionHighlightBg(baseBg: string, theme: AppTheme) {
   return blendHex(theme.selectedHunk, baseBg, SELECTION_BG_BLEND);
+}
+
+/** Blend a cell background toward the note color for subtle annotation range highlighting. */
+export function noteRangeHighlightBg(baseBg: string, theme: AppTheme) {
+  return blendHex(theme.noteBorder, baseBg, NOTE_RANGE_BG_BLEND);
 }
 
 /** Return the neutral active-hunk rail color for the current theme. */
