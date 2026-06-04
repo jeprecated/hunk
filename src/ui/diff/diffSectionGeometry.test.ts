@@ -201,6 +201,25 @@ describe("measureDiffSectionGeometry", () => {
     );
   });
 
+  test("measures wrapped generated non-ASCII rows without quadratic slicing", () => {
+    const generatedCatalogLine = `export const messages = ${JSON.stringify({
+      hosted: "托管服务需要订阅".repeat(3_000),
+    })};`;
+    const file = createTestDiffFile({
+      before: "export const messages = {};\n",
+      after: `${generatedCatalogLine}\n`,
+      id: "generated-catalog",
+      path: "messages.ts",
+    });
+
+    const startedAt = performance.now();
+    const geometry = measureDiffSectionGeometry(file, "split", true, theme, [], 120, true, true);
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(geometry.bodyHeight).toBeGreaterThan(100);
+    expect(elapsedMs).toBeLessThan(1_000);
+  });
+
   test("returns a one-row placeholder for files with no visible hunks", () => {
     const file = createTestDiffFile({
       after: "const stable = true;\n",

@@ -672,6 +672,55 @@ describe("App interactions", () => {
     }
   }, 20_000);
 
+  test("rapid half-page scrolling stays stable after wrapping generated catalog rows", async () => {
+    const updateDepthErrors: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      if (args.some((arg) => String(arg).includes("Maximum update depth exceeded"))) {
+        updateDepthErrors.push(args.map(String).join(" "));
+      }
+      originalError(...args);
+    };
+
+    const longCatalogValue = "托管服务需要订阅".repeat(500);
+    const files = Array.from({ length: 8 }, (_, index) =>
+      createTestDiffFile(
+        `catalog-${index}`,
+        `locales/${index}/messages.ts`,
+        `export const messages = ${JSON.stringify({ old: longCatalogValue })};\n`,
+        `export const messages = ${JSON.stringify({ next: longCatalogValue })};\n`,
+      ),
+    );
+    const setup = await testRender(
+      <AppHost bootstrap={createTestVcsAppBootstrap({ files, initialMode: "split" })} />,
+      { width: 160, height: 16 },
+    );
+
+    try {
+      await flush(setup);
+      await act(async () => {
+        await setup.mockInput.typeText("w");
+      });
+      await settleWrapToggle(setup);
+
+      for (let batch = 0; batch < 3; batch += 1) {
+        await act(async () => {
+          for (let index = 0; index < 10; index += 1) {
+            await setup.mockInput.typeText("d");
+          }
+        });
+        await flush(setup);
+      }
+
+      expect(updateDepthErrors).toEqual([]);
+    } finally {
+      console.error = originalError;
+      await act(async () => {
+        setup.renderer.destroy();
+      });
+    }
+  }, 20_000);
+
   test("keyboard shortcuts toggle notes, line numbers, and hunk metadata", async () => {
     const setup = await testRender(<AppHost bootstrap={createSingleFileBootstrap()} />, {
       width: 240,

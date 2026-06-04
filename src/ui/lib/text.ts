@@ -75,6 +75,26 @@ function measureSanitizedTextWidth(text: string) {
   return stringWidth(text);
 }
 
+export interface TextWidthCluster {
+  text: string;
+  width: number;
+}
+
+/** Return whether sanitized text can be sliced by UTF-16 offsets as single-cell ASCII. */
+export function isPrintableAsciiText(text: string) {
+  return printableAsciiRegex.test(text);
+}
+
+/** Split text into terminal-width grapheme clusters after one terminal sanitization pass. */
+export function textWidthClusters(text: string): TextWidthCluster[] {
+  const safeText = sanitizeTerminalLine(text);
+
+  return textClusters(safeText).map((cluster) => ({
+    text: cluster,
+    width: measureSanitizedTextWidth(cluster),
+  }));
+}
+
 /** Measure text in terminal cells, treating CJK and emoji clusters as wide. */
 export function measureTextWidth(text: string) {
   return measureSanitizedTextWidth(sanitizeTerminalLine(text));

@@ -26,7 +26,13 @@ import { type PlannedReviewRow } from "./reviewRenderPlan";
 import { inlineNoteTitle } from "../components/panes/AgentInlineNote";
 import { wrapText } from "../lib/agentPopover";
 import { sanitizeTerminalLine, sanitizeTerminalSpans } from "../../lib/terminalText";
-import { measureTextWidth, padText as padTextByWidth, sliceTextByWidth } from "../lib/text";
+import {
+  isPrintableAsciiText,
+  measureTextWidth,
+  padText as padTextByWidth,
+  sliceTextByWidth,
+  textWidthClusters,
+} from "../lib/text";
 import type { CopySelectedRowRange } from "../components/panes/copySelection";
 
 /** Clamp a label to one terminal row with an ellipsis. */
@@ -299,6 +305,11 @@ interface WrappedCellLayout {
   lines: WrappedCellLine[];
 }
 
+/** Append one wrapped span fragment and preserve adjacent style merging. */
+function appendWrappedSpanFragment(current: RenderSpan[], span: RenderSpan, text: string) {
+  appendRenderSpan(current, { ...span, text });
+}
+
 /** Wrap styled spans into visual lines while preserving color runs across splits. */
 function wrapSpans(spans: RenderSpan[], width: number) {
   if (width <= 0) {
@@ -309,50 +320,41 @@ function wrapSpans(spans: RenderSpan[], width: number) {
   let current = lines[0]!;
   let remaining = width;
 
+  /** Start a fresh visual continuation line. */
+  const startNextLine = () => {
+    current = [];
+    lines.push(current);
+    remaining = width;
+  };
+
   for (const span of sanitizeTerminalSpans(spans)) {
-    const spanWidth = measureTextWidth(span.text);
-    if (spanWidth === 0) {
-      appendRenderSpan(current, span);
+    if (isPrintableAsciiText(span.text)) {
+      let offset = 0;
+      while (offset < span.text.length) {
+        if (remaining <= 0) {
+          startNextLine();
+        }
+
+        const take = Math.min(remaining, span.text.length - offset);
+        appendWrappedSpanFragment(current, span, span.text.slice(offset, offset + take));
+        offset += take;
+        remaining -= take;
+      }
       continue;
     }
 
-    let offset = 0;
-
-    while (offset < spanWidth) {
-      if (remaining <= 0) {
-        current = [];
-        lines.push(current);
-        remaining = width;
-      }
-
-      const visible = sliceTextByWidth(span.text, offset, remaining);
-      if (visible.width === 0) {
-        // A single wide cluster cannot fit in the remaining cells; continue on the next row.
-        current = [];
-        lines.push(current);
-        remaining = width;
-        const forced = sliceTextByWidth(span.text, offset, width);
-        if (forced.width === 0) {
-          break;
-        }
-        const nextSpan = {
-          ...span,
-          text: forced.text,
-        };
-        current.push(nextSpan);
-        offset += forced.width;
-        remaining = Math.max(0, width - forced.width);
+    for (const cluster of textWidthClusters(span.text)) {
+      if (cluster.width === 0) {
+        appendWrappedSpanFragment(current, span, cluster.text);
         continue;
       }
 
-      const nextSpan = {
-        ...span,
-        text: visible.text,
-      };
-      appendRenderSpan(current, nextSpan);
+      if (remaining <= 0 || (cluster.width > remaining && remaining < width)) {
+        startNextLine();
+      }
 
-      offset += visible.width;
-      remaining -= visible.width;
+      appendWrappedSpanFragment(current, span, cluster.text);
+      remaining = Math.max(0, remaining - cluster.width);
     }
   }
 
